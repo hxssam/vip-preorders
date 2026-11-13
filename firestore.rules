@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Вставьте этот текст в Firebase Console → Firestore Database → Rules → Publish.
+// Доступ только у email из списка ниже (они должны быть добавлены
+// в Authentication → Users). Пишите строчными буквами.
+// Нужен ещё один аккаунт (например, директора) — добавьте строку через запятую.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'staff@vip.com'
+        ];
+    }
+
+    // Приложению нужны только эти четыре коллекции.
+    match /{col}/{docId} {
+      allow read, write: if isStaff() && col in ['menu', 'categories', 'orders', 'meta'];
+    }
+  }
+}
