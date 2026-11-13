@@ -128,6 +128,12 @@
    ПЕЧАТЬ: на листе остаётся только бланк
    ===================================================================== */
 #printRoot { display: none; }
+/* временный режим измерения (JS подгоняет бланк под один лист) */
+#printRoot.measuring { display: block !important; position: absolute; left: -99999px; top: 0; width: 186mm; visibility: hidden; pointer-events: none; }
+.pf-wrap { position: relative; overflow: hidden; }
+.sheet.pf { min-height: 0; padding: 0; margin: 0; box-shadow: none; }
+.sheet.pf .sh-wm { top: 50%; }
+.sh-table td.tm { font-variant-numeric: tabular-nums; letter-spacing: .01em; }
 
 @media print {
   @page { size: A4; margin: 10mm 12mm; }
@@ -137,12 +143,9 @@
     height: auto !important; min-height: 0 !important; overflow: visible !important;
   }
   body > * { display: none !important; }
-  body > #printRoot { display: block !important; }
-  #printRoot .sheet {
-    width: auto; min-height: 0; padding: 0; margin: 0; box-shadow: none;
-  }
-  /* водяной знак: в печати привязан к странице (не создаёт лишнюю страницу) */
-  #printRoot .sheet .sh-wm {
-    position: fixed; left: 50%; top: 52%; width: 118mm; transform: translate(-50%, -50%);
+  /* всегда ровно один лист: область жёстко ограничена по высоте */
+  body > #printRoot {
+    display: block !important; width: 186mm; height: 262mm; max-height: 262mm; overflow: hidden;
+    break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid;
   }
 }

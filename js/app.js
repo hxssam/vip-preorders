@@ -83,7 +83,7 @@
     draft: null, dirty: false, lastHash: '',
     f: { q: '', range: 'all', status: '', limit: 24 },
     mCat: 'all', mQ: '',
-    pCat: 'all', pQ: '', pCourse: '1',
+    pCat: 'all', pQ: '', pServe: '',
     deferred: false
   };
 
@@ -105,9 +105,17 @@
     lines.forEach(l => { q += num(l.qty); s += lineSum(l); });
     return { qty: round2(q), sum: round2(s) };
   };
+  /* «Подача» — время, к которому гость хочет получить блюдо (ЧЧ:ММ). Старые значения-цифры (1, 2…) игнорируются. */
+  function normServe(v) {
+    const m = /^\s*(\d{1,2})\s*[:.\-]\s*(\d{2})\s*$/.exec(String(v == null ? '' : v));
+    if (!m) return '';
+    const h = +m[1], mi = +m[2];
+    return h > 23 || mi > 59 ? '' : String(h).padStart(2, '0') + ':' + m[2];
+  }
+  const serveOf = l => normServe(l && l.serve != null ? l.serve : (l ? l.course : ''));
+  const serveMin = l => { const t = serveOf(l); return t ? (+t.slice(0, 2)) * 60 + (+t.slice(3)) : 99999; };
   function sortedLines(lines) {
-    const key = l => { const c = String(l.course == null ? '' : l.course).trim(); const n = parseFloat(c); return c === '' || !isFinite(n) ? 999 : n; };
-    return lines.map((l, i) => ({ l, i })).sort((a, b) => (key(a.l) - key(b.l)) || (a.i - b.i)).map(x => x.l);
+    return lines.map((l, i) => ({ l, i })).sort((a, b) => (serveMin(a.l) - serveMin(b.l)) || (a.i - b.i)).map(x => x.l);
   }
   function normOrder(o) {
     return Object.assign({ no: 0, date: '', time: '', name: '', phone: '', table: '', guests: '', prepay: 0, notes: '', status: 'new', accepted: '', acceptedBy: '' },
@@ -120,7 +128,7 @@
 
   const nb = s => esc(s) || '&nbsp;';
 
-  function sheetHTML(src) {
+  function sheetHTML(src, opts) {
     const o = normOrder(src);
     const lines = sortedLines(o.lines).filter(l => String(l.name || '').trim());
     const tot = totals(lines);
@@ -132,7 +140,7 @@
 
     const rows = lines.map(l => {
       const q = num(l.qty);
-      return '<tr><td class="c">' + esc(l.course) + '</td>' +
+      return '<tr><td class="c tm">' + esc(serveOf(l)) + '</td>' +
         '<td class="n"><div class="nm">' + esc(l.name) + '</div>' + (l.note ? '<div class="nt">' + esc(l.note) + '</div>' : '') + '</td>' +
         '<td class="c">' + esc(fmt(q)) + '</td>' +
         '<td class="p">' + esc(money(lineSum(l))) + (q !== 1 ? '<span class="pu">' + esc(fmt(q)) + ' × ' + esc(fmt(l.price)) + '</span>' : '') + '</td></tr>';
@@ -141,7 +149,7 @@
     const dateTxt = o.date ? fmtDate(o.date) + ' · ' + weekday(o.date) : '';
     const noTxt = o.no ? pad(o.no) : '';
 
-    return '<div class="sheet">' +
+    return '<div class="sheet' + (opts && opts.fit ? ' pf' : '') + '">' +
       '<img class="sh-wm" src="assets/logo-print.png" alt="">' +
       '<div class="sh-head"><img class="sh-logo" src="assets/logo-print.png" alt="ВИАЙПИ">' +
       '<div class="sh-title">Бланк предварительного заказа<br>рестобара «ВИАЙПИ»</div>' +
@@ -170,16 +178,43 @@
   }
 
   /* ============================== печать ================================ */
+  /* Область печати A4 (поля 10 мм сверху/снизу и 12 мм по бокам). Высоту берём с запасом,
+     чтобы бланк ВСЕГДА умещался на одном листе (в т.ч. в Safari с колонтитулами). */
+  const PRINT_W_MM = 186, PRINT_H_MM = 262;
+  function fitSheetToPage(root) {
+    const wrap = $('.pf-wrap', root), sheet = $('.sheet', root);
+    if (!wrap || !sheet) return 1;
+    const MM = 96 / 25.4, W = PRINT_W_MM * MM, H = PRINT_H_MM * MM;
+    root.classList.add('measuring');
+    const hAt = k => { sheet.style.transform = 'none'; sheet.style.width = (W / k) + 'px'; return sheet.offsetHeight * k; };
+    let s = 1;
+    if (hAt(1) > H) {
+      /* подбираем самый крупный масштаб, при котором бланк целиком умещается по высоте */
+      let lo = 0.2, hi = 1;
+      for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (hAt(mid) <= H) lo = mid; else hi = mid; }
+      s = lo;
+    }
+    sheet.style.width = (W / s) + 'px';
+    sheet.style.transformOrigin = '0 0';
+    sheet.style.transform = 'scale(' + s + ')';
+    wrap.style.width = W + 'px';
+    wrap.style.height = Math.min(H, Math.ceil(sheet.offsetHeight * s)) + 'px';
+    root.classList.remove('measuring');
+    return s;
+  }
   function printOrder(o) {
     const root = $('#printRoot');
-    root.innerHTML = sheetHTML(o);
+    root.innerHTML = '<div class="pf-wrap">' + sheetHTML(o, { fit: true }) + '</div>';
     const prev = document.title;
     document.title = 'Бланк №' + pad(o.no) + ' — ' + (o.name || 'гость') + ' — ' + fmtDate(o.date);
     const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore); };
     window.addEventListener('afterprint', restore);
     const imgs = $$('img', root).map(im => im.complete ? Promise.resolve() : new Promise(r => { im.onload = im.onerror = r; }));
     const fonts = (document.fonts && document.fonts.ready) ? document.fonts.ready.catch(() => { }) : Promise.resolve();
-    Promise.all(imgs.concat([fonts])).then(() => setTimeout(() => window.print(), 80));
+    Promise.all(imgs.concat([fonts])).then(() => {
+      fitSheetToPage(root);
+      setTimeout(() => window.print(), 80);
+    });
   }
 
   /* =========================== мелкие компоненты ======================= */
@@ -357,7 +392,7 @@
     if (!o) { viewEl.innerHTML = notFoundHTML(); return; }
     const n = normOrder(o);
     viewEl.innerHTML =
-      '<section class="page">' +
+      '<section class="page' + (S.quiet ? ' quiet' : '') + '">' +
       '<div class="view-bar"><a class="btn ghost" href="#/orders">' + ic('back') + '<span>Журнал</span></a>' +
       '<div class="view-title"><h1>Заказ № ' + esc(pad(n.no)) + '</h1><span id="vSt">' + stPill(n.status) + '</span></div>' +
       '<div class="view-actions">' +
@@ -423,13 +458,13 @@
     const n = normOrder(o);
     return Object.assign({}, n, {
       id: o.id, guests: String(n.guests == null ? '' : n.guests), prepay: num(n.prepay) ? String(num(n.prepay)) : '',
-      lines: n.lines.map(l => ({ id: l.id || uid(), course: String(l.course == null ? '' : l.course), name: l.name || '', qty: num(l.qty) || 1, price: num(l.price), note: l.note || '', mid: l.mid || '' }))
+      lines: n.lines.map(l => ({ id: l.id || uid(), serve: serveOf(l), name: l.name || '', qty: num(l.qty) || 1, price: num(l.price), note: l.note || '', mid: l.mid || '' }))
     });
   }
   function loadDraft() {
     try {
       const d = JSON.parse(lsGet('vip.draft') || 'null');
-      if (d && typeof d === 'object' && Array.isArray(d.lines)) return Object.assign(newDraft(), d, { id: '' });
+      if (d && typeof d === 'object' && Array.isArray(d.lines)) return Object.assign(newDraft(), d, { id: '', lines: d.lines.map(l => Object.assign({}, l, { serve: serveOf(l) })) });
     } catch (e) { /* ignore */ }
     return null;
   }
@@ -447,7 +482,6 @@
     const mine = lsGet('vip.staff'); if (mine) set[mine] = 1;
     return Object.keys(set);
   }
-  const courseOptions = sel => ['', '1', '2', '3', '4', '5', '6'].map(c => '<option value="' + c + '"' + (String(sel) === c ? ' selected' : '') + '>' + (c || '—') + '</option>').join('');
 
   function editorHTML(d, isNew) {
     return '<section class="page editor"><div class="ed-grid"><div class="ed-main">' +
@@ -496,8 +530,9 @@
       '<aside class="picker" id="picker" aria-label="Меню ресторана">' +
       '<div class="picker-h"><h2>Меню</h2><button type="button" class="icon-btn only-drawer" id="closePicker" aria-label="Закрыть">' + ic('x') + '</button></div>' +
       '<label class="search">' + ic('search') + '<input id="pQ" type="search" placeholder="Найти блюдо…" autocomplete="off"></label>' +
-      '<div class="course-pick"><span>Подача для<br>новых позиций</span><div class="seg" id="pCourse">' +
-      ['1', '2', '3', '4', '5', ''].map(c => '<button type="button" data-c="' + c + '" class="' + (S.pCourse === c ? 'on' : '') + '">' + (c || '—') + '</button>').join('') + '</div></div>' +
+      '<div class="serve-pick"><label for="pServe">Время подачи<br>новых позиций</label>' +
+      '<input id="pServe" type="time" value="' + esc(S.pServe) + '" aria-label="Время подачи для новых позиций">' +
+      '<button type="button" class="icon-btn" id="pServeClr" aria-label="Сбросить время подачи" title="Без времени">' + ic('x') + '</button></div>' +
       '<div class="chips scroll" id="pCats"></div>' +
       '<div class="pitems" id="pItems"></div></aside>' +
       '</div></section><div class="picker-scrim" id="pScrim" hidden></div>';
@@ -526,7 +561,7 @@
 
   function lineHTML(l, i, flash) {
     return '<div class="line' + (flash ? ' flash' : '') + '" data-i="' + i + '">' +
-      '<label class="ln-c"><span>Подача</span><select data-f="course">' + courseOptions(l.course) + '</select></label>' +
+      '<label class="ln-c"><span>Подача</span><input data-f="serve" type="time" value="' + esc(serveOf(l)) + '" aria-label="Время подачи"></label>' +
       '<label class="ln-n"><span>Наименование</span><input data-f="name" type="text" value="' + esc(l.name) + '" placeholder="Название блюда"></label>' +
       '<div class="ln-q"><span>Кол-во</span><div class="stepper"><button type="button" data-step="-1" aria-label="Меньше">−</button>' +
       '<input data-f="qty" type="number" inputmode="decimal" min="0" step="1" value="' + esc(l.qty) + '" aria-label="Количество"><button type="button" data-step="1" aria-label="Больше">+</button></div></div>' +
@@ -589,10 +624,11 @@
     const lines = $('#lines');
     lines.addEventListener('input', e => {
       const t = e.target, f = t.dataset.f;
-      if (!f || f === 'course') return;
+      if (!f) return;
       const idx = lineIndex(t);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
+      if (f === 'serve') { L.serve = normServe(t.value); markDirty(); return; }
       L[f] = t.value;
       markDirty();
       if (f === 'qty' || f === 'price') { refreshLineSum(t.closest('.line'), L); updateTotals(); if (f === 'qty') renderPickerItems(); }
@@ -603,11 +639,23 @@
       const idx = lineIndex(t);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
-      if (f === 'course') {
-        L.course = t.value; sortLines(); renderLines(L.id); markDirty();
+      if (f === 'serve') {
+        L.serve = normServe(t.value); markDirty();
       } else if (f === 'qty' && !(num(t.value) > 0)) {
         L.qty = 1; t.value = '1'; refreshLineSum(t.closest('.line'), L); updateTotals(); renderPickerItems();
       }
+    });
+    /* после ввода времени строки аккуратно пересортировываются (когда фокус ушёл из списка) */
+    lines.addEventListener('focusout', e => {
+      if (!e.target.dataset || e.target.dataset.f !== 'serve') return;
+      setTimeout(() => {
+        if (!S.draft || S.view !== 'editor') return;
+        const a = document.activeElement;
+        if (a && a.closest && a.closest('#lines') && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
+        const before = S.draft.lines.map(l => l.id).join();
+        sortLines();
+        if (S.draft.lines.map(l => l.id).join() !== before) renderLines();
+      }, 380);
     });
     lines.addEventListener('click', e => {
       const b = e.target.closest('button');
@@ -627,7 +675,7 @@
     });
 
     $('#addCustom').onclick = () => {
-      const L = { id: uid(), course: S.pCourse, name: '', qty: 1, price: '', note: '', mid: '' };
+      const L = { id: uid(), serve: S.pServe, name: '', qty: 1, price: '', note: '', mid: '' };
       S.draft.lines.push(L);
       renderLines(L.id); updateTotals(); markDirty();
       const inp = $('.line[data-i="' + (S.draft.lines.length - 1) + '"] [data-f="name"]');
@@ -647,12 +695,8 @@
     $('#closePicker').onclick = closePicker;
     $('#pScrim').onclick = closePicker;
     $('#pQ').addEventListener('input', e => { S.pQ = e.target.value; renderPickerItems(); });
-    $('#pCourse').addEventListener('click', e => {
-      const b = e.target.closest('[data-c]');
-      if (!b) return;
-      S.pCourse = b.dataset.c;
-      $$('#pCourse button').forEach(x => x.classList.toggle('on', x === b));
-    });
+    $('#pServe').addEventListener('input', e => { S.pServe = normServe(e.target.value); });
+    $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; };
     $('#pCats').addEventListener('click', e => {
       const b = e.target.closest('[data-c]');
       if (!b) return;
@@ -704,12 +748,12 @@
   function addMenuItem(mid) {
     const it = S.menu.find(m => m.id === mid);
     if (!it || !S.draft) return;
-    const course = S.pCourse;
-    const ex = S.draft.lines.find(l => l.mid === mid && String(l.course) === String(course) && !String(l.note || '').trim());
+    const serve = S.pServe;
+    const ex = S.draft.lines.find(l => l.mid === mid && serveOf(l) === serve && !String(l.note || '').trim());
     let L;
     if (ex) { ex.qty = round2(num(ex.qty) + 1); L = ex; }
     else {
-      L = { id: uid(), course: course, name: it.name, qty: 1, price: num(it.price), note: '', mid: mid };
+      L = { id: uid(), serve: serve, name: it.name, qty: 1, price: num(it.price), note: '', mid: mid };
       S.draft.lines.push(L);
       sortLines();
     }
@@ -734,7 +778,7 @@
     const isNew = !d.id;
     const id = d.id || Store.newId();
     const lines = d.lines.filter(l => String(l.name).trim()).map(l => ({
-      id: l.id || uid(), course: String(l.course == null ? '' : l.course), name: String(l.name).trim(),
+      id: l.id || uid(), serve: serveOf(l), name: String(l.name).trim(),
       qty: num(l.qty) > 0 ? num(l.qty) : 1, price: Math.max(0, num(l.price)), note: String(l.note || '').trim(), mid: l.mid || ''
     }));
     const rec = {
@@ -1161,7 +1205,7 @@
       case 'orders': if (col === 'orders') renderOrdersBody(); break;
       case 'menu': if (col === 'menu' || col === 'categories') renderMenuBody(); break;
       case 'view':
-        if (col === 'orders') renderView(parseRoute().id);
+        if (col === 'orders') { S.quiet = true; renderView(parseRoute().id); S.quiet = false; }
         break;
       case 'editor':
         if ((col === 'menu' || col === 'categories') && S.draft) { renderPickerChips(); renderPickerItems(); }
@@ -1202,6 +1246,6 @@
     refresh('menu');
   }
 
-  window.VIPApp = { S: S, sheetHTML: sheetHTML, printOrder: printOrder, route: route };
+  window.VIPApp = { S: S, sheetHTML: sheetHTML, printOrder: printOrder, fitSheetToPage: fitSheetToPage, route: route };
   boot();
 })();
