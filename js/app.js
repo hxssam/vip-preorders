@@ -12,6 +12,7 @@
 
   /* =============================== иконки =============================== */
   const ICON = {
+    share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
     list: '<path d="M9 5h11M9 12h11M9 19h11"/><path d="M4 5h.01M4 12h.01M4 19h.01"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
@@ -175,6 +176,80 @@
       '<div class="f"><label>Принял</label><span class="v">' + nb(o.acceptedBy) + '</span></div></div>' +
       '<p class="sh-consent">' + esc(CONSENT) + ' <span class="sig"></span></p>' +
       '</div>';
+  }
+
+  /* ====================== бланк → картинка (WhatsApp, Telegram, ВК) ====================== */
+  function sheetModel(src) {
+    const o = normOrder(src);
+    const lines = sortedLines(o.lines).filter(l => String(l.name || '').trim());
+    const tot = totals(lines), prepay = num(o.prepay);
+    return {
+      no: o.no ? pad(o.no) : '',
+      date: o.date ? fmtDate(o.date) + ' · ' + weekday(o.date) : '',
+      name: String(o.name || ''), phone: String(o.phone || ''), table: String(o.table || ''),
+      guests: String(o.guests || ''), time: String(o.time || ''), prepay: prepay > 0 ? money(prepay) : '',
+      rows: lines.map(l => {
+        const q = num(l.qty);
+        return { serve: serveOf(l), name: String(l.name), note: String(l.note || ''), qty: fmt(q), price: money(lineSum(l)), unit: q !== 1 ? fmt(q) + ' × ' + fmt(l.price) : '' };
+      }),
+      totQty: lines.length ? fmt(tot.qty) : '', totSum: lines.length ? money(tot.sum) : '',
+      notes: String(o.notes || ''),
+      sum2: prepay > 0 ? [['Предоплата: ', 0], [money(prepay), 1], ['  ·  К доплате: ', 0], [money(Math.max(0, tot.sum - prepay)), 1]] : null,
+      footTotal: lines.length ? money(tot.sum) : '', accepted: o.accepted ? fmtDate(o.accepted) : '', acceptedBy: String(o.acceptedBy || '')
+    };
+  }
+  function shareFileName(n) {
+    return ('Бланк_' + pad(n.no) + (n.name ? '_' + n.name : '')).replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) + '.png';
+  }
+  function openShare(o) {
+    const n = normOrder(o);
+    const title = 'Бланк предварительного заказа №' + pad(n.no);
+    const summary = [title, n.name, n.date ? fmtDate(n.date) + (n.time ? ' ' + n.time : '') : '', n.table ? 'Стол ' + n.table : ''].filter(Boolean).join(' · ');
+    const m = openModal('<h3>Поделиться бланком</h3>' +
+      '<div class="share-prev" id="shPrev"><span class="share-wait">Готовлю изображение…</span></div>' +
+      '<div class="share-btns" id="shBtns"></div><p class="share-hint" id="shHint"></p>' +
+      '<div class="modal-actions"><button type="button" class="btn" id="shClose">Закрыть</button></div>', 'share');
+    $('#shClose', m).onclick = closeModal;
+    if (!window.VIPShare) { $('#shPrev', m).textContent = 'Модуль изображения не загружен — обновите страницу.'; return; }
+    window.VIPShare.render(sheetModel(n)).then(res => {
+      if (!$('#shPrev')) return;                                  /* окно уже закрыли */
+      const blob = res.blob, url = URL.createObjectURL(blob), fname = shareFileName(n);
+      const file = typeof File === 'function' ? new File([blob], fname, { type: 'image/png' }) : null;
+      let canNative = false;
+      try { canNative = !!(file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })); } catch (e) { canNative = false; }
+      const canCopy = !!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem);
+      const touch = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+      $('#shPrev').innerHTML = '<img alt="Бланк заказа" src="' + url + '">';
+      $('#shBtns').innerHTML =
+        (canNative ? '<button type="button" class="btn primary big" id="shNative">' + ic('share') + '<span>Поделиться…</span></button>' : '') +
+        '<div class="row"><button type="button" class="btn" id="shDl">' + ic('download') + '<span>Скачать PNG</span></button>' +
+        (canCopy ? '<button type="button" class="btn" id="shCopy">' + ic('copy') + '<span>Копировать</span></button>' : '') + '</div>' +
+        (!touch ? '<div class="row msg-row">' +
+          '<a class="btn msgr" style="--c:#25d366" id="shWa" href="https://web.whatsapp.com/" target="_blank" rel="noopener"><i></i>WhatsApp</a>' +
+          '<a class="btn msgr" style="--c:#2aabee" id="shTg" href="https://web.telegram.org/a/" target="_blank" rel="noopener"><i></i>Telegram</a>' +
+          '<a class="btn msgr" style="--c:#0077ff" id="shVk" href="https://vk.com/im" target="_blank" rel="noopener"><i></i>ВКонтакте</a></div>' : '');
+      $('#shHint').textContent = touch
+        ? (canNative ? 'Нажмите «Поделиться» и выберите WhatsApp, Telegram или ВК — бланк уйдёт картинкой.' : 'Скачайте изображение и отправьте его из галереи.')
+        : 'Кнопки мессенджеров открывают чат, а изображение копируется автоматически: в чате нажмите ⌘V (Ctrl+V).';
+      const copyImg = quiet => {
+        if (!canCopy) return Promise.resolve(false);
+        return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          .then(() => { if (!quiet) toast('Изображение скопировано — вставьте его в чат (⌘V / Ctrl+V)', 'ok'); return true; })
+          .catch(() => { if (!quiet) toast('Не удалось скопировать. Нажмите «Скачать PNG».', 'err'); return false; });
+      };
+      if (canNative) $('#shNative').onclick = () => {
+        navigator.share({ files: [file], title: title, text: summary }).catch(err => {
+          if (err && err.name !== 'AbortError') toast('Не удалось открыть «Поделиться». Нажмите «Скачать PNG».', 'err');
+        });
+      };
+      $('#shDl').onclick = () => {
+        const a = document.createElement('a');
+        a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+        toast('Изображение сохранено', 'ok');
+      };
+      if (canCopy) $('#shCopy').onclick = () => copyImg(false);
+      ['#shWa', '#shTg', '#shVk'].forEach(sel => { const el = $(sel); if (el) el.addEventListener('click', () => { copyImg(true).then(ok => { if (ok) toast('Изображение скопировано — вставьте в чат (⌘V / Ctrl+V)', 'ok'); }); }); });
+    }).catch(() => { const p = $('#shPrev'); if (p) p.textContent = 'Не удалось создать изображение. Обновите страницу и попробуйте снова.'; });
   }
 
   /* ============================== печать ================================ */
@@ -401,6 +476,7 @@
       '<button type="button" class="btn" id="vDup">' + ic('copy') + '<span>Дублировать</span></button>' +
       '<button type="button" class="btn danger" id="vDel">' + ic('trash') + '<span>Удалить</span></button>' +
       '<button type="button" class="btn primary" id="vPrint">' + ic('printer') + '<span>Печать / PDF</span></button>' +
+      '<button type="button" class="btn wide" id="vShare">' + ic('share') + '<span>Поделиться</span></button>' +
       '</div></div>' +
       '<div class="paper-stage"><div class="paper-fit"><div class="paper-scale">' + sheetHTML(n) + '</div></div></div>' +
       '<p class="hint">Для PDF нажмите <b>«Печать / PDF»</b> и в окне печати выберите принтер <b>«Сохранить как PDF»</b>.</p>' +
@@ -409,6 +485,7 @@
       '</section>';
 
     $('#vPrint').onclick = () => printOrder(o);
+    $('#vShare').onclick = () => openShare(o);
     $('#vStatus').onchange = e => {
       Store.save('orders', o.id, Object.assign({}, o, { status: e.target.value, updatedAt: Date.now() }));
       toast('Статус: ' + STATUS[e.target.value], 'ok');
@@ -991,6 +1068,25 @@
   }
 
   /* ======================= загрузка исходного меню ====================== */
+  /* Наборы (напитки и т. п.): добавляются только недостающие позиции, ваши правки не трогаются */
+  function packOps(pack, state) {
+    const ops = [];
+    pack.categories.forEach(c => { if (!state.haveC.has(c.id)) { state.haveC.add(c.id); ops.push({ col: 'categories', id: c.id, data: { name: c.name, sort: ++state.cSort } }); } });
+    pack.items.forEach((r, i) => {
+      const id = pack.prefix + String(i + 1).padStart(3, '0');
+      if (state.haveM.has(id)) return;
+      state.haveM.add(id);
+      ops.push({ col: 'menu', id: id, data: { name: r[1], cat: r[0], price: r[2], weight: r[3], desc: r[4] || '', active: true, sort: ++state.mSort, updatedAt: state.now } });
+    });
+    ops.push({ col: 'meta', id: 'pack_' + pack.id, data: { done: true, at: state.now } });
+    return ops;
+  }
+  function packState(cats, menu) {
+    return {
+      now: Date.now(), haveC: new Set(cats.map(c => c.id)), haveM: new Set(menu.map(m => m.id)),
+      cSort: Math.max(0, ...cats.map(c => +c.sort || 0)), mSort: Math.max(0, ...menu.map(m => +m.sort || 0))
+    };
+  }
   function doSeed() {
     const seed = window.VIP_SEED;
     if (!seed) return Promise.resolve();
@@ -1001,7 +1097,17 @@
       data: { name: r[1], cat: r[0], price: r[2], weight: r[3], desc: r[4] || '', active: true, sort: i + 1, updatedAt: now }
     }));
     ops.push({ col: 'meta', id: 'seed', data: { done: true, at: now } });
+    const st = packState(seed.categories.map((c, i) => ({ id: c.id, sort: i + 1 })), seed.items.map((r, i) => ({ id: 's' + String(i + 1).padStart(3, '0'), sort: i + 1 })));
+    (window.VIP_PACKS || []).forEach(p => packOps(p, st).forEach(op => ops.push(op)));
     toast('Меню ВИАЙПИ загружено', 'ok');
+    return Store.batch(ops);
+  }
+  function topUpPacks() {
+    const todo = (window.VIP_PACKS || []).filter(p => !Store.get('meta').some(m => m.id === 'pack_' + p.id && m.done));
+    if (!todo.length) return;
+    const st = packState(S.cats, S.menu), ops = [];
+    todo.forEach(p => packOps(p, st).forEach(op => ops.push(op)));
+    toast('В меню добавлено: ' + todo.map(p => p.title.toLowerCase()).join(', '), 'ok');
     return Store.batch(ops);
   }
   function maybeSeed() {
@@ -1010,8 +1116,13 @@
     if (!Store.isSynced()) return;
     S.seedChecked = true;
     const done = Store.get('meta').some(m => m.id === 'seed' && m.done);
-    if (done) return;
-    if (S.cats.length || S.menu.length) { Store.save('meta', 'seed', { done: true, at: Date.now() }); return; }
+    if (done) { topUpPacks(); return; }
+    if (S.cats.length || S.menu.length) {
+      /* меню уже собрано вручную — исходное не навязываем, только отмечаем наборы как «пройденные» */
+      const now = Date.now();
+      Store.batch([{ col: 'meta', id: 'seed', data: { done: true, at: now } }].concat((window.VIP_PACKS || []).map(p => ({ col: 'meta', id: 'pack_' + p.id, data: { done: true, at: now } }))));
+      return;
+    }
     doSeed();
   }
 
