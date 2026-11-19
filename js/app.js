@@ -113,6 +113,22 @@
     const h = +m[1], mi = +m[2];
     return h > 23 || mi > 59 ? '' : String(h).padStart(2, '0') + ':' + m[2];
   }
+  /* ввод времени «как на кассе»: набираете 1930 → 19:30 (24 часа, без AM/PM и системных пикеров) */
+  function typeTime(raw) {
+    let d = String(raw == null ? '' : raw).replace(/\D/g, '').slice(0, 4);
+    if (d.length >= 2 && +d.slice(0, 2) > 23) d = d[0] === '2' ? '2' + d.slice(2) : ('0' + d).slice(0, 4);   /* 930 → 09:30; 24 → 2 */
+    return d.length > 2 ? d.slice(0, 2) + ':' + d.slice(2) : d;
+  }
+  /* итоговое значение при выходе из поля: {v:'19:00'} | {v:'', bad:true} */
+  function finishTime(raw) {
+    const t = typeTime(raw);
+    if (!t) return { v: '' };
+    let h, m;
+    if (t.length <= 2) { h = +t; m = 0; }
+    else { h = +t.slice(0, 2); const ms = t.slice(3); m = ms.length === 1 ? (+ms <= 5 ? +ms * 10 : +ms) : +ms; }
+    if (h > 23 || m > 59) return { v: '', bad: true };
+    return { v: String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') };
+  }
   const serveOf = l => normServe(l && l.serve != null ? l.serve : (l ? l.course : ''));
   const serveMin = l => { const t = serveOf(l); return t ? (+t.slice(0, 2)) * 60 + (+t.slice(3)) : 99999; };
   function sortedLines(lines) {
@@ -581,6 +597,7 @@
       '</div></div>' +
 
       '<div class="card"><div class="card-h"><h2>Позиции заказа</h2><div class="head-actions">' +
+      '<button type="button" class="btn sm" id="sortTime" title="Расставить позиции по времени подачи">' + ic('clock') + 'По времени</button>' +
       '<button type="button" class="btn sm" id="addCustom">' + ic('plus') + 'Своя позиция</button>' +
       '<button type="button" class="btn sm primary only-drawer" data-open-picker>' + ic('book') + 'Из меню</button></div></div>' +
       '<div id="lines"></div>' +
@@ -608,7 +625,7 @@
       '<div class="picker-h"><h2>Меню</h2><button type="button" class="icon-btn only-drawer" id="closePicker" aria-label="Закрыть">' + ic('x') + '</button></div>' +
       '<label class="search">' + ic('search') + '<input id="pQ" type="search" placeholder="Найти блюдо…" autocomplete="off"></label>' +
       '<div class="serve-pick"><label for="pServe">Время подачи<br>новых позиций</label>' +
-      '<input id="pServe" type="time" value="' + esc(S.pServe) + '" aria-label="Время подачи для новых позиций">' +
+      '<input id="pServe" class="tm-in" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" value="' + esc(S.pServe) + '" aria-label="Время подачи для новых позиций">' +
       '<button type="button" class="icon-btn" id="pServeClr" aria-label="Сбросить время подачи" title="Без времени">' + ic('x') + '</button></div>' +
       '<div class="chips scroll" id="pCats"></div>' +
       '<div class="pitems" id="pItems"></div></aside>' +
@@ -627,7 +644,7 @@
     } else {
       d = loadDraft() || newDraft();
     }
-    S.draft = d; S.dirty = false; S.pCat = 'all'; S.pQ = '';
+    S.draft = d; S.dirty = false; S.pCat = 'all'; S.pQ = ''; S.pServe = '';
     viewEl.innerHTML = editorHTML(d, isNew);
     bindEditor();
     renderLines();
@@ -638,7 +655,7 @@
 
   function lineHTML(l, i, flash) {
     return '<div class="line' + (flash ? ' flash' : '') + '" data-i="' + i + '">' +
-      '<label class="ln-c"><span>Подача</span><input data-f="serve" type="time" value="' + esc(serveOf(l)) + '" aria-label="Время подачи"></label>' +
+      '<label class="ln-c"><span>Подача</span><input data-f="serve" class="tm-in" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" value="' + esc(serveOf(l)) + '" aria-label="Время подачи"></label>' +
       '<label class="ln-n"><span>Наименование</span><input data-f="name" type="text" value="' + esc(l.name) + '" placeholder="Название блюда"></label>' +
       '<div class="ln-q"><span>Кол-во</span><div class="stepper"><button type="button" data-step="-1" aria-label="Меньше">−</button>' +
       '<input data-f="qty" type="number" inputmode="decimal" min="0" step="1" value="' + esc(l.qty) + '" aria-label="Количество"><button type="button" data-step="1" aria-label="Больше">+</button></div></div>' +
@@ -657,6 +674,22 @@
       return;
     }
     box.innerHTML = d.lines.map((l, i) => lineHTML(l, i, l.id === flashId)).join('');
+  }
+  /* добавить/обновить одну строку без перерисовки всего списка (быстро даже при 40+ позициях) */
+  function appendLineRow(L) {
+    const box = $('#lines');
+    const i = S.draft.lines.indexOf(L);
+    if (!box || i < 0 || box.querySelector('.lines-empty') || box.children.length !== S.draft.lines.length - 1) { renderLines(L.id); return; }
+    box.insertAdjacentHTML('beforeend', lineHTML(L, i, true));
+  }
+  function bumpLineRow(L) {
+    const box = $('#lines');
+    const i = S.draft.lines.indexOf(L);
+    const row = box && box.children[i];
+    if (!row || row.dataset.i !== String(i)) { renderLines(L.id); return; }
+    $('[data-f="qty"]', row).value = L.qty;
+    refreshLineSum(row, L);
+    row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
   }
   function sortLines() {
     S.draft.lines = sortedLines(S.draft.lines);
@@ -684,6 +717,42 @@
     return c;
   };
 
+  /* общий обработчик полей .tm-in внутри контейнера: набор, выход из поля, выделение при входе */
+  function bindTimeInputs(box, onValue) {
+    if (!box) return;
+    box.addEventListener('input', e => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains('tm-in')) return;
+      t._fresh = false;
+      const v = typeTime(t.value);
+      if (v !== t.value) t.value = v;
+      t.classList.remove('err');
+      if (!v) onValue(t, '');
+      else if (/^\d\d:\d\d$/.test(v) && !finishTime(v).bad) onValue(t, v);
+    });
+    box.addEventListener('focusout', e => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains('tm-in')) return;
+      commitTime(t, onValue);
+    });
+    box.addEventListener('focusin', e => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains('tm-in')) return;
+      t._fresh = true;   /* выделить всё, но только если пользователь ещё ничего не успел набрать */
+      setTimeout(() => { if (t._fresh && document.activeElement === t) { try { t.select(); } catch (x) { /* ignore */ } } }, 0);
+    });
+    box.addEventListener('keydown', e => { if (e.target._fresh) e.target._fresh = false; });
+  }
+  function commitTime(t, onValue) {
+    const r = finishTime(t.value);
+    t.value = r.v;
+    t.classList.toggle('err', !!r.bad);
+    if (r.bad) toast('Время должно быть от 00:00 до 23:59', 'err');
+    onValue(t, r.v);
+  }
+  let pickTimer = null;
+  function queuePicker() { clearTimeout(pickTimer); pickTimer = setTimeout(renderPickerItems, 160); }
+
   function bindEditor() {
     const form = $('#edForm');
     form.addEventListener('submit', e => e.preventDefault());
@@ -705,10 +774,10 @@
       const idx = lineIndex(t);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
-      if (f === 'serve') { L.serve = normServe(t.value); markDirty(); return; }
+      if (f === 'serve') return;   /* время обрабатывается отдельно (маска ЧЧ:ММ) */
       L[f] = t.value;
       markDirty();
-      if (f === 'qty' || f === 'price') { refreshLineSum(t.closest('.line'), L); updateTotals(); if (f === 'qty') renderPickerItems(); }
+      if (f === 'qty' || f === 'price') { refreshLineSum(t.closest('.line'), L); updateTotals(); if (f === 'qty') queuePicker(); }
     });
     lines.addEventListener('change', e => {
       const t = e.target, f = t.dataset.f;
@@ -716,23 +785,16 @@
       const idx = lineIndex(t);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
-      if (f === 'serve') {
-        L.serve = normServe(t.value); markDirty();
-      } else if (f === 'qty' && !(num(t.value) > 0)) {
+      if (f === 'serve') return;
+      if (f === 'qty' && !(num(t.value) > 0)) {
         L.qty = 1; t.value = '1'; refreshLineSum(t.closest('.line'), L); updateTotals(); renderPickerItems();
       }
     });
-    /* после ввода времени строки аккуратно пересортировываются (когда фокус ушёл из списка) */
-    lines.addEventListener('focusout', e => {
-      if (!e.target.dataset || e.target.dataset.f !== 'serve') return;
-      setTimeout(() => {
-        if (!S.draft || S.view !== 'editor') return;
-        const a = document.activeElement;
-        if (a && a.closest && a.closest('#lines') && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
-        const before = S.draft.lines.map(l => l.id).join();
-        sortLines();
-        if (S.draft.lines.map(l => l.id).join() !== before) renderLines();
-      }, 380);
+    /* время подачи: маска ЧЧ:ММ, строки НЕ прыгают — порядок меняет только кнопка «По времени» и сохранение */
+    bindTimeInputs(lines, (t, v) => {
+      const idx = lineIndex(t);
+      const L = idx >= 0 && S.draft.lines[idx];
+      if (L) { L.serve = v; markDirty(); }
     });
     lines.addEventListener('click', e => {
       const b = e.target.closest('button');
@@ -754,7 +816,7 @@
     $('#addCustom').onclick = () => {
       const L = { id: uid(), serve: S.pServe, name: '', qty: 1, price: '', note: '', mid: '' };
       S.draft.lines.push(L);
-      renderLines(L.id); updateTotals(); markDirty();
+      appendLineRow(L); updateTotals(); markDirty();
       const inp = $('.line[data-i="' + (S.draft.lines.length - 1) + '"] [data-f="name"]');
       if (inp) { inp.focus(); inp.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
     };
@@ -772,8 +834,15 @@
     $('#closePicker').onclick = closePicker;
     $('#pScrim').onclick = closePicker;
     $('#pQ').addEventListener('input', e => { S.pQ = e.target.value; renderPickerItems(); });
-    $('#pServe').addEventListener('input', e => { S.pServe = normServe(e.target.value); });
-    $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; };
+    bindTimeInputs($('#picker'), (t, v) => { if (t.id === 'pServe') S.pServe = v; });
+    $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; $('#pServe').classList.remove('err'); };
+    $('#sortTime').onclick = () => {
+      const before = S.draft.lines.map(l => l.id).join();
+      sortLines();
+      const moved = S.draft.lines.map(l => l.id).join() !== before;
+      if (moved) { renderLines(); markDirty(); }
+      toast(moved ? 'Позиции расставлены по времени подачи' : 'Уже расставлено по времени', 'ok');
+    };
     $('#pCats').addEventListener('click', e => {
       const b = e.target.closest('[data-c]');
       if (!b) return;
@@ -832,10 +901,10 @@
     else {
       L = { id: uid(), serve: serve, name: it.name, qty: 1, price: num(it.price), note: '', mid: mid };
       S.draft.lines.push(L);
-      sortLines();
     }
     markDirty();
-    renderLines(L.id); updateTotals(); renderPickerItems();
+    if (ex) bumpLineRow(L); else appendLineRow(L);
+    updateTotals(); renderPickerItems();
     const row = $$('.line').find((r, i) => S.draft.lines[i] && S.draft.lines[i].id === L.id);
     if (row && window.matchMedia('(min-width: 1100px)').matches) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
@@ -843,6 +912,8 @@
   function saveOrder(doPrint) {
     const d = S.draft;
     if (!d) return;
+    const act = document.activeElement;
+    if (act && act.classList && act.classList.contains('tm-in')) act.blur();   /* зафиксировать недописанное время */
     const errs = [];
     if (!String(d.name).trim()) errs.push(['name', 'Укажите ФИО гостя']);
     if (!d.date) errs.push(['date', 'Укажите дату']);
@@ -854,7 +925,7 @@
     }
     const isNew = !d.id;
     const id = d.id || Store.newId();
-    const lines = d.lines.filter(l => String(l.name).trim()).map(l => ({
+    const lines = sortedLines(d.lines).filter(l => String(l.name).trim()).map(l => ({
       id: l.id || uid(), serve: serveOf(l), name: String(l.name).trim(),
       qty: num(l.qty) > 0 ? num(l.qty) : 1, price: Math.max(0, num(l.price)), note: String(l.note || '').trim(), mid: l.mid || ''
     }));

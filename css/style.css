@@ -51,7 +51,7 @@ body.modal-open { overflow: hidden; }
 }
 #bg i {
   position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%;
-  filter: blur(90px); opacity: .10;
+  opacity: .10; contain: strict; will-change: transform;
   background: radial-gradient(circle, #d9b45a, transparent 65%);
   animation: drift 40s ease-in-out infinite alternate;
 }
@@ -59,10 +59,12 @@ body.modal-open { overflow: hidden; }
 #bg i:nth-child(2) { right: -28vmax; top: 22vh; opacity: .06; animation-duration: 52s; background: radial-gradient(circle, #fff, transparent 65%); }
 #bg i:nth-child(3) { left: 18vw; bottom: -38vmax; opacity: .08; animation-duration: 60s; }
 #bg::after {
-  content: ''; position: absolute; inset: 0; opacity: .06; mix-blend-mode: overlay;
+  content: ''; position: absolute; inset: 0; opacity: .035;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 @keyframes drift { to { transform: translate3d(5vmax, -4vmax, 0); } }
+/* пока вводите данные — фон неподвижен, ничего не мешает набору */
+body[data-view="editor"] #bg i, body[data-view="menu"] #bg i { animation: none; }
 
 /* ---------- иконки, мелочи ---------- */
 .ic { width: 18px; height: 18px; flex: none; display: inline-block; vertical-align: -3px; }
@@ -139,12 +141,13 @@ body.modal-open { overflow: hidden; }
   border-radius: 99px; font-size: 12.5px; font-weight: 700; background: rgba(255, 255, 255, .05);
   border: 1px solid var(--line-2); color: var(--muted);
 }
-.pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 0 currentColor; }
-.pill.ok { color: var(--ok); } .pill.ok i { background: var(--ok); animation: ping 2.6s infinite; }
-.pill.warn { color: var(--warn); } .pill.warn i { background: var(--warn); animation: ping 1.2s infinite; }
+.pill i { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.pill i::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: currentColor; opacity: 0; pointer-events: none; }
+.pill.ok { color: var(--ok); } .pill.ok i { background: var(--ok); } .pill.ok i::after { animation: ping 2.6s infinite; }
+.pill.warn { color: var(--warn); } .pill.warn i { background: var(--warn); } .pill.warn i::after { animation: ping 1.2s infinite; }
 .pill.bad { color: var(--bad); } .pill.bad i { background: var(--bad); }
 .pill.local { color: var(--gold); } .pill.local i { background: var(--gold); }
-@keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(76, 195, 138, .45); } 70%, 100% { box-shadow: 0 0 0 8px rgba(76, 195, 138, 0); } }
+@keyframes ping { 0% { transform: scale(1); opacity: .45; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
 
 .popover {
   position: absolute; top: 48px; right: 0; width: 270px; padding: 8px; z-index: 60;
@@ -356,7 +359,8 @@ input[type=number] { -moz-appearance: textfield; }
 .ln-c { grid-area: c; } .ln-n { grid-area: n; } .ln-q { grid-area: q; } .ln-p { grid-area: p; } .ln-s { grid-area: s; } .ln-x { grid-area: x; }
 .ln-note { grid-area: note; height: 38px !important; font-size: 14px !important; background: transparent !important; border-style: dashed !important; }
 .line input, .line select { height: 44px; }
-.line input[type=time] { text-align: center; padding: 0 6px; font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.line input.tm-in, .serve-pick input.tm-in { text-align: center; padding: 0 6px; font-size: 16px; font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: .04em; }
+.tm-in::placeholder { color: var(--faint); font-weight: 600; letter-spacing: .02em; }
 input[type=time]::-webkit-calendar-picker-indicator { opacity: .55; filter: invert(.85); cursor: pointer; }
 input[type=time], input[type=date] { min-width: 0; max-width: 100%; }
 .ln-s b { height: 44px; display: flex; align-items: center; justify-content: flex-end; font-weight: 800; font-size: 16px; color: var(--gold-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -493,8 +497,14 @@ input[type=time], input[type=date] { min-width: 0; max-width: 100%; }
 }
 @media (min-width: 1100px) { .picker-scrim { display: none !important; } }
 
+@media (max-width: 860px), (pointer: coarse) {
+  #bg i, #bg::after { display: none; }
+  .topbar, .tabbar, .ed-bar, .scrim, .toast, .modal { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+  .topbar { background: #0c0c0e; }
+  .tabbar { background: #0e0e10; }
+  .ed-bar { background: #141417; }
+}
 @media (max-width: 860px) {
-  #bg i { animation: none; }
   .topbar { padding: 0 16px; height: 60px; gap: 12px; }
   .nav { display: none; }
   .brand img { height: 38px; }
@@ -567,7 +577,7 @@ input[type=time], input[type=date] { min-width: 0; max-width: 100%; }
 
 /* на сенсорных экранах поля не меньше 16px — иначе iPhone приближает страницу при вводе */
 @media (pointer: coarse) {
-  input, select, textarea, .ln-note, .mr-price input, .line input[type=time] { font-size: 16px !important; }
+  input, select, textarea, .ln-note, .mr-price input, .line input.tm-in { font-size: 16px !important; }
 }
 
 /* ---------- окно «Поделиться бланком» ---------- */
