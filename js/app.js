@@ -84,7 +84,7 @@
     draft: null, dirty: false, lastHash: '',
     f: { q: '', range: 'all', status: '', limit: 24 },
     mCat: 'all', mQ: '',
-    pCat: 'all', pQ: '', pServe: '', pTimes: {},
+    pCat: 'all', pQ: '', pServe: '', pTimes: {}, pLink: {},
     deferred: false
   };
 
@@ -646,7 +646,7 @@
     } else {
       d = loadDraft() || newDraft();
     }
-    S.draft = d; S.dirty = false; S.pCat = 'all'; S.pQ = ''; S.pServe = ''; S.pTimes = {};
+    S.draft = d; S.dirty = false; S.pCat = 'all'; S.pQ = ''; S.pServe = ''; S.pTimes = {}; S.pLink = {};
     viewEl.innerHTML = editorHTML(d, isNew);
     bindEditor();
     renderLines();
@@ -752,6 +752,21 @@
     if (r.bad) toast('Время должно быть от 00:00 до 23:59', 'err');
     onValue(t, r.v);
   }
+  function applyLinkedTime(mid, v) {
+    const id = S.pLink[mid];
+    if (!id || !S.draft) return;
+    const idx = S.draft.lines.findIndex(l => l.id === id);
+    if (idx < 0) { delete S.pLink[mid]; return; }
+    const L = S.draft.lines[idx];
+    if (serveOf(L) === v) return;
+    L.serve = v; markDirty();
+    const box = $('#lines'), row = box && box.children[idx];
+    if (row && row.dataset.i === String(idx)) {
+      const inp = $('[data-f="serve"]', row);
+      if (inp) { inp.value = v; inp.classList.remove('err'); }
+      row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+    }
+  }
   let pickTimer = null;
   function queuePicker() { clearTimeout(pickTimer); pickTimer = setTimeout(renderPickerItems, 160); }
 
@@ -796,7 +811,10 @@
     bindTimeInputs(lines, (t, v) => {
       const idx = lineIndex(t);
       const L = idx >= 0 && S.draft.lines[idx];
-      if (L) { L.serve = v; markDirty(); }
+      if (L) {
+        L.serve = v; markDirty();
+        Object.keys(S.pLink).forEach(k => { if (S.pLink[k] === L.id) delete S.pLink[k]; });
+      }
     });
     lines.addEventListener('click', e => {
       const b = e.target.closest('button');
@@ -859,8 +877,19 @@
         $$('#pItems .pi-time').forEach(i => { i.placeholder = v || 'ЧЧ:ММ'; });
       } else {
         const row = t.closest('.pitem');
-        if (row) { if (v) S.pTimes[row.dataset.id] = v; else delete S.pTimes[row.dataset.id]; }
+        if (row) {
+          const mid = row.dataset.id;
+          if (v) S.pTimes[mid] = v; else delete S.pTimes[mid];
+          applyLinkedTime(mid, v);
+        }
       }
+    });
+    /* закончили ввод времени в строке меню — связь с уже добавленной позицией закрывается */
+    $('#picker').addEventListener('focusout', e => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains('pi-time')) return;
+      const row = t.closest('.pitem');
+      if (row) delete S.pLink[row.dataset.id];
     });
     $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; $('#pServe').classList.remove('err'); $$('#pItems .pi-time').forEach(i => { i.placeholder = 'ЧЧ:ММ'; }); };
     $('#sortTime').onclick = () => {
@@ -941,6 +970,8 @@
       L = { id: uid(), serve: serve, name: it.name, qty: 1, price: num(it.price), note: '', mid: mid };
       S.draft.lines.push(L);
     }
+    /* блюдо добавлено без времени → время, которое вы введёте в его строке меню, проставится в этот заказ (в любом порядке: «+» → время или время → «+») */
+    if (serveOf(L)) delete S.pLink[mid]; else S.pLink[mid] = L.id;
     markDirty();
     if (ex) bumpLineRow(L); else appendLineRow(L);
     updateTotals(); renderPickerItems();
