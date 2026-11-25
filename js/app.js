@@ -74,6 +74,10 @@
   const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
   const clone = o => JSON.parse(JSON.stringify(o));
 
+  const APP_VERSION = '2026-11-26c';   /* держать в одном значении с version.json */
+  const BUILD_DATE = '2026-11-25';     /* часы устройства «раньше» этой даты считаются неверными */
+  const AUTO_DEFAULT = 3;              /* автоудаление: дней после даты заказа */
+
   const STATUS = { new: 'Новый', confirmed: 'Подтверждён', done: 'Выполнен', cancelled: 'Отменён' };
   const stPill = s => '<span class="st st-' + (STATUS[s] ? s : 'new') + '">' + esc(STATUS[s] || STATUS.new) + '</span>';
 
@@ -376,6 +380,7 @@
       '<section class="page">' +
       '<div class="page-head"><div><p class="eyebrow">Журнал</p><h1>Заказы и брони</h1></div>' +
       '<a class="btn primary" href="#/new">' + ic('plus') + 'Новый заказ</a></div>' +
+      '<button type="button" class="auto-note" id="autoNote"></button>' +
       '<div class="stats" id="oStats"></div>' +
       '<div class="toolbar">' +
       '<label class="search">' + ic('search') + '<input id="oSearch" type="search" placeholder="Поиск: ФИО, телефон, стол, №, блюдо…" value="' + esc(S.f.q) + '" autocomplete="off"></label>' +
@@ -385,6 +390,8 @@
       Object.keys(STATUS).map(k => '<option value="' + k + '"' + (S.f.status === k ? ' selected' : '') + '>' + STATUS[k] + '</option>').join('') + '</select>' +
       '</div><div id="oList"></div></section>';
 
+    refreshAutoNote();
+    $('#autoNote').onclick = openAutoSettings;
     $('#oSearch').addEventListener('input', e => { S.f.q = e.target.value; S.f.limit = 24; renderOrdersBody(); });
     $('#oStatus').addEventListener('change', e => { S.f.status = e.target.value; S.f.limit = 24; renderOrdersBody(); });
     $('#oRange').addEventListener('click', e => {
@@ -497,7 +504,8 @@
       '<div class="paper-stage"><div class="paper-fit"><div class="paper-scale">' + sheetHTML(n) + '</div></div></div>' +
       '<p class="hint">Для PDF нажмите <b>«Печать / PDF»</b> и в окне печати выберите принтер <b>«Сохранить как PDF»</b>.</p>' +
       '<p class="audit">Создал: ' + esc(n.createdBy || '—') + (n.createdAt ? ' · ' + esc(new Date(n.createdAt).toLocaleString('ru-RU')) : '') +
-      (n.updatedAt && n.updatedAt !== n.createdAt ? ' · изменён ' + esc(new Date(n.updatedAt).toLocaleString('ru-RU')) : '') + '</p>' +
+      (n.updatedAt && n.updatedAt !== n.createdAt ? ' · изменён ' + esc(new Date(n.updatedAt).toLocaleString('ru-RU')) : '') +
+      (deleteOn(n) ? ' · автоудаление: ' + esc(fmtDate(deleteOn(n))) : '') + '</p>' +
       '</section>';
 
     $('#vPrint').onclick = () => printOrder(o);
@@ -626,9 +634,10 @@
       '<aside class="picker" id="picker" aria-label="Меню ресторана">' +
       '<div class="picker-h"><h2>Меню</h2><button type="button" class="icon-btn only-drawer" id="closePicker" aria-label="Закрыть">' + ic('x') + '</button></div>' +
       '<label class="search">' + ic('search') + '<input id="pQ" type="search" placeholder="Найти блюдо…" autocomplete="off"></label>' +
-      '<div class="serve-pick"><label for="pServe">Общее время<br>подачи</label>' +
+      '<div class="serve-pick"><label for="pServe">Время подачи<br>новых позиций</label>' +
       '<input id="pServe" class="tm-in" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" value="' + esc(S.pServe) + '" aria-label="Время подачи для новых позиций">' +
-      '<button type="button" class="icon-btn" id="pServeClr" aria-label="Сбросить время подачи" title="Без времени">' + ic('x') + '</button></div>' +
+      '<button type="button" class="icon-btn" id="pServeClr" aria-label="Сбросить время подачи" title="Без времени">' + ic('x') + '</button>' +
+      '<button type="button" class="btn sm serve-all" id="pServeAll" hidden>Проставить всем позициям без времени</button></div>' +
       '<div class="chips scroll" id="pCats"></div>' +
       '<div class="pitems" id="pItems"></div></aside>' +
       '</div></section><div class="picker-scrim" id="pScrim" hidden></div>';
@@ -656,7 +665,7 @@
   }
 
   function lineHTML(l, i, flash) {
-    return '<div class="line' + (flash ? ' flash' : '') + '" data-i="' + i + '">' +
+    return '<div class="line' + (flash ? ' flash' : '') + '" data-i="' + i + '" data-lid="' + esc(l.id) + '">' +
       '<label class="ln-c"><span>Подача</span><input data-f="serve" class="tm-in" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" value="' + esc(serveOf(l)) + '" aria-label="Время подачи"></label>' +
       '<label class="ln-n"><span>Наименование</span><input data-f="name" type="text" value="' + esc(l.name) + '" placeholder="Название блюда"></label>' +
       '<div class="ln-q"><span>Кол-во</span><div class="stepper"><button type="button" data-step="-1" aria-label="Меньше">−</button>' +
@@ -670,6 +679,7 @@
   function renderLines(flashId) {
     const box = $('#lines');
     if (!box || !S.draft) return;
+    flushTime(box);
     const d = S.draft;
     if (!d.lines.length) {
       box.innerHTML = '<div class="lines-empty">' + ic('utensils') + '<div>Пока нет позиций.<br>Выберите блюда из меню — они появятся здесь.</div></div>';
@@ -713,11 +723,6 @@
     if (el) el.textContent = money(lineSum(l));
   }
   const lineIndex = el => { const row = el.closest('.line'); return row ? +row.dataset.i : -1; };
-  const lineCounts = () => {
-    const c = {};
-    if (S.draft) S.draft.lines.forEach(l => { if (l.mid) c[l.mid] = (c[l.mid] || 0) + num(l.qty); });
-    return c;
-  };
 
   /* общий обработчик полей .tm-in внутри контейнера: набор, выход из поля, выделение при входе */
   function bindTimeInputs(box, onValue) {
@@ -752,6 +757,75 @@
     if (r.bad) toast('Время должно быть от 00:00 до 23:59', 'err');
     onValue(t, r.v);
   }
+  /* время в строке заказа */
+  function onLineTime(t, v) {
+    const row = t.closest('.line');
+    const L = row && S.draft && S.draft.lines.find(l => l.id === row.dataset.lid);   /* по id: порядок строк мог измениться */
+    if (!L || serveOf(L) === v) return;
+    L.serve = v; markDirty();
+    Object.keys(S.pLink).forEach(k => { if (S.pLink[k] === L.id) delete S.pLink[k]; });   /* ручная правка закрывает связь с меню */
+    updatePickBadges();
+  }
+  /* время в строке меню / общее время для новых позиций */
+  function onPickTime(t, v) {
+    if (t.id === 'pServe') {
+      S.pServe = v;
+      $$('#pItems .pi-time').forEach(i => { i.placeholder = v || 'ЧЧ:ММ'; });
+      refreshServeAll();
+      return;
+    }
+    const row = t.closest('.pitem');
+    if (!row) return;
+    const mid = row.dataset.id;
+    if (v) S.pTimes[mid] = v; else delete S.pTimes[mid];
+    applyLinkedTime(mid, v);
+  }
+  /* недописанное время (клавиатура открыта) фиксируется, прежде чем список будет перерисован */
+  function flushTime(box) {
+    const a = document.activeElement;
+    if (a && a.classList && a.classList.contains('tm-in') && box && box.contains(a)) commitTime(a, a.closest('#lines') ? onLineTime : onPickTime);
+  }
+  /* что уже в заказе по каждому блюду меню: количество и времена подачи */
+  function pickInfo() {
+    const by = {};
+    if (!S.draft) return by;
+    S.draft.lines.forEach(l => {
+      if (!l.mid) return;
+      const o = by[l.mid] || (by[l.mid] = { qty: 0, t: {} });
+      const q = num(l.qty); o.qty += q;
+      const k = serveOf(l); o.t[k] = (o.t[k] || 0) + q;
+    });
+    Object.keys(by).forEach(m => {
+      const keys = Object.keys(by[m].t).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a < b ? -1 : 1));
+      by[m].txt = keys.map(k => (k || 'без времени') + ' ×' + fmt(by[m].t[k])).join(' · ');
+    });
+    return by;
+  }
+  /* обновляет бейджи «×N» и строку «в заказе: 20:30 ×2» на месте — без перерисовки списка и потери фокуса */
+  function updatePickBadges() {
+    const box = $('#pItems');
+    if (box) {
+      const by = pickInfo();
+      $$('.pitem', box).forEach(row => {
+        const info = by[row.dataset.id], has = !!(info && info.qty > 0);
+        let b = $('.pi-badge', row);
+        if (has) { if (!b) { b = document.createElement('i'); b.className = 'pi-badge'; row.appendChild(b); } b.textContent = '×' + fmt(info.qty); }
+        else if (b) b.remove();
+        const main = $('.pi-main', row);
+        let n = main && $('.pi-in', main);
+        if (has && main) { if (!n) { n = document.createElement('span'); n.className = 'pi-in'; main.appendChild(n); } n.textContent = 'в заказе: ' + info.txt; }
+        else if (n) n.remove();
+      });
+    }
+    refreshServeAll();
+  }
+  function refreshServeAll() {
+    const b = $('#pServeAll');
+    if (!b) return;
+    const blank = S.draft ? S.draft.lines.filter(l => !serveOf(l)).length : 0;
+    b.hidden = !(S.pServe && blank);
+    if (!b.hidden) b.textContent = 'Проставить ' + S.pServe + ' всем без времени (' + blank + ')';
+  }
   function applyLinkedTime(mid, v) {
     const id = S.pLink[mid];
     if (!id || !S.draft) return;
@@ -766,9 +840,8 @@
       if (inp) { inp.value = v; inp.classList.remove('err'); }
       row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     }
+    updatePickBadges();
   }
-  let pickTimer = null;
-  function queuePicker() { clearTimeout(pickTimer); pickTimer = setTimeout(renderPickerItems, 160); }
 
   function bindEditor() {
     const form = $('#edForm');
@@ -794,7 +867,7 @@
       if (f === 'serve') return;   /* время обрабатывается отдельно (маска ЧЧ:ММ) */
       L[f] = t.value;
       markDirty();
-      if (f === 'qty' || f === 'price') { refreshLineSum(t.closest('.line'), L); updateTotals(); if (f === 'qty') queuePicker(); }
+      if (f === 'qty' || f === 'price') { refreshLineSum(t.closest('.line'), L); updateTotals(); if (f === 'qty') updatePickBadges(); }
     });
     lines.addEventListener('change', e => {
       const t = e.target, f = t.dataset.f;
@@ -804,18 +877,11 @@
       const L = S.draft.lines[idx];
       if (f === 'serve') return;
       if (f === 'qty' && !(num(t.value) > 0)) {
-        L.qty = 1; t.value = '1'; refreshLineSum(t.closest('.line'), L); updateTotals(); renderPickerItems();
+        L.qty = 1; t.value = '1'; refreshLineSum(t.closest('.line'), L); updateTotals(); updatePickBadges();
       }
     });
     /* время подачи: маска ЧЧ:ММ, строки НЕ прыгают — порядок меняет только кнопка «По времени» и сохранение */
-    bindTimeInputs(lines, (t, v) => {
-      const idx = lineIndex(t);
-      const L = idx >= 0 && S.draft.lines[idx];
-      if (L) {
-        L.serve = v; markDirty();
-        Object.keys(S.pLink).forEach(k => { if (S.pLink[k] === L.id) delete S.pLink[k]; });
-      }
-    });
+    bindTimeInputs(lines, onLineTime);
     lines.addEventListener('click', e => {
       const b = e.target.closest('button');
       if (!b) return;
@@ -824,19 +890,19 @@
       const L = S.draft.lines[idx];
       if (b.hasAttribute('data-del')) {
         S.draft.lines.splice(idx, 1);
-        renderLines(); updateTotals(); renderPickerItems(); markDirty();
+        renderLines(); updateTotals(); updatePickBadges(); markDirty();
       } else if (b.dataset.step) {
         L.qty = Math.max(1, round2(num(L.qty) + num(b.dataset.step)));
         const row = b.closest('.line');
         $('[data-f="qty"]', row).value = L.qty;
-        refreshLineSum(row, L); updateTotals(); renderPickerItems(); markDirty();
+        refreshLineSum(row, L); updateTotals(); updatePickBadges(); markDirty();
       }
     });
 
     $('#addCustom').onclick = () => {
       const L = { id: uid(), serve: S.pServe, name: '', qty: 1, price: '', note: '', mid: '' };
       S.draft.lines.push(L);
-      appendLineRow(L); updateTotals(); markDirty();
+      appendLineRow(L); updateTotals(); updatePickBadges(); markDirty();
       const inp = $('.line[data-i="' + (S.draft.lines.length - 1) + '"] [data-f="name"]');
       if (inp) { inp.focus(); inp.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
     };
@@ -871,26 +937,23 @@
     $('#closePicker').onclick = closePicker;
     $('#pScrim').onclick = closePicker;
     $('#pQ').addEventListener('input', e => { S.pQ = e.target.value; renderPickerItems(); });
-    bindTimeInputs($('#picker'), (t, v) => {
-      if (t.id === 'pServe') {
-        S.pServe = v;
-        $$('#pItems .pi-time').forEach(i => { i.placeholder = v || 'ЧЧ:ММ'; });
-      } else {
-        const row = t.closest('.pitem');
-        if (row) {
-          const mid = row.dataset.id;
-          if (v) S.pTimes[mid] = v; else delete S.pTimes[mid];
-          applyLinkedTime(mid, v);
-        }
-      }
-    });
+    bindTimeInputs($('#picker'), onPickTime);
     /* закончили ввод времени в строке меню — связь с уже добавленной позицией закрывается */
     $('#picker').addEventListener('focusout', e => {
       const t = e.target;
       if (!t.classList || !t.classList.contains('pi-time')) return;
       const row = t.closest('.pitem');
       if (row) delete S.pLink[row.dataset.id];
+      if (S.pickStale) setTimeout(() => { if (S.pickStale) renderPickerItems(); }, 450);
     });
+    $('#pServeAll').onclick = () => {
+      if (!S.pServe) return;
+      let n = 0;
+      S.draft.lines.forEach(l => { if (!serveOf(l)) { l.serve = S.pServe; n++; } });
+      if (!n) return;
+      markDirty(); renderLines(); updatePickBadges();
+      toast('Время ' + S.pServe + ' проставлено: ' + n, 'ok');
+    };
     $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; $('#pServe').classList.remove('err'); $$('#pItems .pi-time').forEach(i => { i.placeholder = 'ЧЧ:ММ'; }); };
     $('#sortTime').onclick = () => {
       const before = S.draft.lines.map(l => l.id).join();
@@ -926,6 +989,9 @@
   function renderPickerItems() {
     const box = $('#pItems');
     if (!box) return;
+    const act = document.activeElement;
+    if (act && act.classList && act.classList.contains('pi-time') && box.contains(act)) { S.pickStale = true; return; }   /* пока вводите время — список не трогаем */
+    S.pickStale = false;
     const keep = box.scrollTop;
     const q = S.pQ.trim().toLowerCase();
     let items = menuSorted();
@@ -935,16 +1001,16 @@
       box.innerHTML = '<div class="pi-empty">' + (S.menu.length ? 'Ничего не найдено' : 'Меню пока пустое — добавьте блюда в разделе «Меню».') + '</div>';
       return;
     }
-    const counts = lineCounts();
+    const by = pickInfo();
     let html = '', last = null;
     items.forEach(i => {
       if (S.pCat === 'all' && i.cat !== last) { html += '<div class="pgroup">' + esc(catName(i.cat)) + '</div>'; last = i.cat; }
       const off = i.active === false;
       html += '<div class="pitem' + (off ? ' off' : '') + '" data-id="' + esc(i.id) + '">' +
-        '<button type="button" class="pi-main"><b>' + esc(i.name) + '</b><small>' + esc(i.weight || '') + (off ? ' <span class="pi-stop">· стоп</span>' : '') + '</small></button>' +
+        '<button type="button" class="pi-main"><b>' + esc(i.name) + '</b><small>' + esc(i.weight || '') + (off ? ' <span class="pi-stop">· стоп</span>' : '') + '</small>' + (by[i.id] ? '<span class="pi-in">в заказе: ' + esc(by[i.id].txt) + '</span>' : '') + '</button>' +
         '<input class="tm-in pi-time" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="' + esc(S.pServe || 'ЧЧ:ММ') + '" value="' + esc(S.pTimes[i.id] || '') + '" aria-label="Время подачи: ' + esc(i.name) + '">' +
         '<span class="pi-price">' + esc(money(i.price)) + '</span><button type="button" class="pi-add" aria-label="Добавить в заказ">' + ic('plus') + '</button>' +
-        (counts[i.id] ? '<i class="pi-badge">×' + esc(fmt(counts[i.id])) + '</i>' : '') + '</div>';
+        (by[i.id] && by[i.id].qty > 0 ? '<i class="pi-badge">×' + esc(fmt(by[i.id].qty)) + '</i>' : '') + '</div>';
     });
     box.innerHTML = html;
     box.scrollTop = keep;
@@ -961,6 +1027,7 @@
       ti.value = r.v; ti.classList.remove('err');
       own = r.v;
       if (r.v) S.pTimes[mid] = r.v; else delete S.pTimes[mid];
+      if (document.activeElement === ti) ti.blur();   /* закрыть клавиатуру до того, как свяжем строку с меню */
     }
     const serve = own || S.pServe;
     const ex = S.draft.lines.find(l => l.mid === mid && serveOf(l) === serve && !String(l.note || '').trim());
@@ -974,7 +1041,7 @@
     if (serveOf(L)) delete S.pLink[mid]; else S.pLink[mid] = L.id;
     markDirty();
     if (ex) bumpLineRow(L); else appendLineRow(L);
-    updateTotals(); renderPickerItems();
+    updateTotals(); updatePickBadges();
     const row = $$('.line').find((r, i) => S.draft.lines[i] && S.draft.lines[i].id === L.id);
     if (row && window.matchMedia('(min-width: 1100px)').matches) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
@@ -1015,6 +1082,8 @@
     lsDel('vip.draft');
     S.draft = null;
     toast('Заказ сохранён', 'ok');
+    const dOn = deleteOn(rec);
+    if (dOn && dOn <= todayISO()) setTimeout(() => toast('Дата заказа старше ' + autoDays() + ' ' + daysWord(autoDays()) + ' — при следующем запуске он будет удалён автоматически', 'err'), 700);
     location.hash = '#/view/' + encodeURIComponent(id);
     if (doPrint) setTimeout(() => printOrder(Object.assign({ id: id }, rec)), 400);
   }
@@ -1164,7 +1233,7 @@
       closeModal();
       toast(item ? 'Позиция обновлена' : 'Позиция добавлена', 'ok');
     });
-    setTimeout(() => f.elements.name.focus(), 50);
+    setTimeout(() => { if (f.isConnected && !f.contains(document.activeElement)) f.elements.name.focus(); }, 50);
   }
 
   async function delItem(it) {
@@ -1207,7 +1276,7 @@
       closeModal();
       toast(cat ? 'Категория обновлена' : 'Категория добавлена', 'ok');
     });
-    setTimeout(() => f.elements.name.focus(), 50);
+    setTimeout(() => { if (f.isConnected && !f.contains(document.activeElement)) f.elements.name.focus(); }, 50);
   }
 
   /* ======================= загрузка исходного меню ====================== */
@@ -1269,6 +1338,108 @@
     doSeed();
   }
 
+  /* ===================== автоудаление старых заказов ===================== */
+  /* Заказ хранится до (дата заказа + N дней) включительно, на следующий день удаляется. N меняется в настройках (0 = выключено). */
+  function autoDays() {
+    const m = S.meta.find(x => x.id === 'settings');
+    const v = m && m.autoDeleteDays != null ? Math.floor(num(m.autoDeleteDays)) : AUTO_DEFAULT;
+    return v >= 0 && v <= 365 ? v : AUTO_DEFAULT;
+  }
+  const deleteOn = o => (o && /^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && autoDays() > 0) ? addDays(o.date, autoDays() + 1) : '';
+  const daysWord = n => (n % 10 === 1 && n % 100 !== 11) ? 'день' : ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) ? 'дня' : 'дней';
+  const autoText = () => { const d = autoDays(); return d > 0 ? 'Заказы удаляются автоматически через ' + d + ' ' + daysWord(d) + ' после даты' : 'Автоудаление заказов выключено'; };
+  const busyOrderId = () => { const r = parseRoute(); return (r.name === 'edit' || r.name === 'view') ? r.id : ''; };
+
+  /* «сегодня» берём не из часов телефона, а из заголовка Date ответа сервера — неверная дата на устройстве ничего не удалит */
+  function trustedToday() {
+    return new Promise(res => {
+      let done = false;
+      const fin = v => { if (!done) { done = true; res(v); } };
+      setTimeout(() => fin(null), 5000);
+      try {
+        fetch(location.pathname + '?clock=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+          .then(r => { const t = Date.parse(r.headers.get('Date') || ''); fin(isFinite(t) ? toISO(new Date(t)) : null); })
+          .catch(() => fin(null));
+      } catch (e) { fin(null); }
+    });
+  }
+  let cleaning = false, cleanTimer = null;
+  function scheduleCleanup(force) { clearTimeout(cleanTimer); cleanTimer = setTimeout(() => autoCleanup(!!force), force ? 200 : 1500); }
+  async function autoCleanup(force) {
+    if (cleaning || !S.appShown || autoDays() <= 0) return;
+    if (!Store.isLoaded('orders') || !Store.isLoaded('meta')) return;
+    if (Store.state.mode === 'cloud' && !Store.isSynced()) return;
+    if ($('.modal')) { scheduleCleanup(force); return; }
+    cleaning = true;
+    try {
+      const today = await trustedToday();
+      if (!today || today < BUILD_DATE) return;
+      const key = today + ':' + autoDays();
+      if (!force && S.cleanedOn === key) return;
+      const busy = busyOrderId();
+      const old = S.orders.filter(o => { const d = deleteOn(o); return d && d <= today && o.id !== busy; });
+      S.cleanedOn = key;
+      if (!old.length) return;
+      if (old.length > 8) {
+        const ok = await confirmBox({ title: 'Удалить старые заказы?', text: 'Найдено заказов старше ' + autoDays() + ' ' + daysWord(autoDays()) + ' после даты: ' + old.length + '. Удалить их из журнала? (Резервную копию можно скачать в меню профиля.)', ok: 'Удалить ' + old.length, danger: true });
+        if (!ok) return;
+      }
+      await Store.batch(old.map(o => ({ col: 'orders', id: o.id, del: true })));
+      toast('Автоудаление: удалено старых заказов — ' + old.length, 'ok');
+    } catch (e) { console.error('Автоудаление', e); } finally { cleaning = false; }
+  }
+  function openAutoSettings() {
+    const m = openModal('<h3>Автоудаление заказов</h3>' +
+      '<p class="modal-text">Заказ остаётся в журнале до даты заказа <b>+ N дней</b> включительно, а на следующий день удаляется автоматически. <b>0</b> — не удалять.</p>' +
+      '<label class="fld"><span>Дней после даты заказа</span><input id="adDays" type="number" inputmode="numeric" min="0" max="365" step="1" value="' + autoDays() + '"></label>' +
+      '<p class="modal-text" id="adInfo"></p>' +
+      '<div class="modal-actions"><button type="button" class="btn" data-no>Отмена</button><button type="button" class="btn primary" data-yes>Сохранить</button></div>', 'sm');
+    const inp = $('#adDays', m), info = $('#adInfo', m);
+    const val = () => { const v = String(inp.value).trim(); return /^\d{1,3}$/.test(v) && +v <= 365 ? +v : null; };
+    const preview = () => {
+      const v = val();
+      if (v == null) { info.textContent = 'Введите число от 0 до 365.'; return; }
+      if (v === 0) { info.textContent = 'Автоудаление будет выключено.'; return; }
+      const t = todayISO();
+      const n = S.orders.filter(o => /^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && addDays(o.date, v + 1) <= t).length;
+      info.textContent = n ? 'Сразу после сохранения будет удалено заказов: ' + n + '.' : 'Сейчас под удаление ничего не попадает.';
+    };
+    inp.addEventListener('input', preview); preview();
+    $('[data-no]', m).onclick = closeModal;
+    $('[data-yes]', m).onclick = () => {
+      const v = val();
+      if (v == null) { inp.classList.add('err'); inp.focus(); return; }
+      closeModal();
+      Store.save('meta', 'settings', { autoDeleteDays: v, updatedAt: Date.now() });
+      toast(v ? 'Автоудаление: через ' + v + ' ' + daysWord(v) + ' после даты' : 'Автоудаление выключено', 'ok');
+      refreshAutoNote();
+      scheduleCleanup(true);
+    };
+    inp.focus(); inp.select();
+  }
+  function refreshAutoNote() {
+    const el = $('#autoNote');
+    if (el) el.innerHTML = ic('trash') + '<span>' + esc(autoText()) + '</span><u>Изменить</u>';
+  }
+
+  /* ============ обновление приложения: новая версия → кнопка «Обновить» ============ */
+  function checkVersion() {
+    try {
+      fetch('version.json?_=' + Date.now(), { cache: 'no-store' })
+        .then(r => (r.ok ? r.json() : null))
+        .then(j => { if (j && j.version && j.version !== APP_VERSION) showUpdateBar(j.version); })
+        .catch(() => { });
+    } catch (e) { /* ignore */ }
+  }
+  function showUpdateBar(ver) {
+    if ($('#updBar')) return;
+    const el = document.createElement('div');
+    el.id = 'updBar'; el.className = 'upd-bar'; el.setAttribute('role', 'status');
+    el.innerHTML = '<span>Вышла новая версия приложения</span><button type="button" class="btn sm primary">Обновить</button>';
+    document.body.appendChild(el);
+    $('button', el).onclick = () => { location.replace(location.pathname + '?v=' + encodeURIComponent(ver) + (location.hash || '')); };
+  }
+
   /* ======================== шапка, вход, состояние ====================== */
   const NAV = [['orders', 'list', 'Журнал'], ['new', 'plus', 'Новый заказ'], ['menu', 'book', 'Меню']];
   function setupChrome() {
@@ -1290,13 +1461,16 @@
     el.className = 'popover';
     el.innerHTML = '<div class="who"><small>' + (st.mode === 'cloud' ? 'Вы вошли как' : 'Режим') + '</small><b>' + esc(st.mode === 'cloud' ? ((st.user && st.user.email) || '') : 'Локальный (без входа)') + '</b></div>' +
       '<button type="button" data-a="backup">' + ic('download') + 'Резервная копия (JSON)</button>' +
-      (st.mode === 'cloud' ? '<button type="button" data-a="logout">' + ic('logout') + 'Выйти</button>' : '');
+      '<button type="button" data-a="auto">' + ic('trash') + (autoDays() > 0 ? 'Автоудаление: ' + autoDays() + ' ' + daysWord(autoDays()) : 'Автоудаление: выкл.') + '</button>' +
+      (st.mode === 'cloud' ? '<button type="button" data-a="logout">' + ic('logout') + 'Выйти</button>' : '') +
+      '<div class="ver">Версия ' + esc(APP_VERSION) + '</div>';
     $('.top-right').appendChild(el);
     el.addEventListener('click', e => {
       const b = e.target.closest('[data-a]');
       if (!b) return;
       el.remove();
       if (b.dataset.a === 'backup') exportBackup();
+      if (b.dataset.a === 'auto') openAutoSettings();
       if (b.dataset.a === 'logout') Store.signOut();
     });
     setTimeout(() => {
@@ -1473,11 +1647,13 @@
     setupChrome();
     Store.watch('categories', d => { S.cats = d; refresh('categories'); });
     Store.watch('menu', d => { S.menu = d; refresh('menu'); maybeSeed(); });
-    Store.watch('orders', d => { S.orders = d; refresh('orders'); });
-    Store.watch('meta', d => { S.meta = d; maybeSeed(); });
-    Store.onState(st => { onState(st); if (S.deferred) maybeFlushDeferred(); maybeSeed(); });
+    Store.watch('orders', d => { S.orders = d; refresh('orders'); scheduleCleanup(); });
+    Store.watch('meta', d => { S.meta = d; maybeSeed(); refreshAutoNote(); scheduleCleanup(); });
+    Store.onState(st => { onState(st); if (S.deferred) maybeFlushDeferred(); maybeSeed(); scheduleCleanup(); });
 
     window.addEventListener('hashchange', onHash);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkVersion(); scheduleCleanup(); } });
+    setInterval(() => { scheduleCleanup(); }, 30 * 60 * 1000);
     window.addEventListener('resize', () => { clearTimeout(boot.t); boot.t = setTimeout(fitPapers, 80); });
     window.addEventListener('beforeunload', e => { if (S.view === 'editor' && S.dirty) { e.preventDefault(); e.returnValue = ''; } });
     document.addEventListener('keydown', e => {
@@ -1491,6 +1667,7 @@
       const sp = $('#splash');
       if (sp) { sp.classList.add('gone'); setTimeout(() => sp.remove(), 520); }
       onState(Store.state);
+      checkVersion();
     });
   }
   function maybeFlushDeferred() {
