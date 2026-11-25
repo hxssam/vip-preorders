@@ -84,7 +84,7 @@
     draft: null, dirty: false, lastHash: '',
     f: { q: '', range: 'all', status: '', limit: 24 },
     mCat: 'all', mQ: '',
-    pCat: 'all', pQ: '', pServe: '',
+    pCat: 'all', pQ: '', pServe: '', pTimes: {},
     deferred: false
   };
 
@@ -614,6 +614,8 @@
       '</div></div>' +
       '</form>' +
 
+      '<div class="ed-danger"><button type="button" class="btn danger" id="edDelete">' + ic('trash') + '<span>' + (isNew ? 'Удалить этот бланк' : 'Удалить заказ') + '</span></button></div>' +
+
       '<div class="ed-bar"><div class="bar-sum"><small>Итого</small><b id="barSum"></b></div><div class="bar-btns">' +
       '<button type="button" class="btn sm only-drawer" data-open-picker>' + ic('book') + 'Меню</button>' +
       '<a class="btn bar-cancel" href="#/orders">Отмена</a>' +
@@ -624,7 +626,7 @@
       '<aside class="picker" id="picker" aria-label="Меню ресторана">' +
       '<div class="picker-h"><h2>Меню</h2><button type="button" class="icon-btn only-drawer" id="closePicker" aria-label="Закрыть">' + ic('x') + '</button></div>' +
       '<label class="search">' + ic('search') + '<input id="pQ" type="search" placeholder="Найти блюдо…" autocomplete="off"></label>' +
-      '<div class="serve-pick"><label for="pServe">Время подачи<br>новых позиций</label>' +
+      '<div class="serve-pick"><label for="pServe">Общее время<br>подачи</label>' +
       '<input id="pServe" class="tm-in" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" value="' + esc(S.pServe) + '" aria-label="Время подачи для новых позиций">' +
       '<button type="button" class="icon-btn" id="pServeClr" aria-label="Сбросить время подачи" title="Без времени">' + ic('x') + '</button></div>' +
       '<div class="chips scroll" id="pCats"></div>' +
@@ -644,7 +646,7 @@
     } else {
       d = loadDraft() || newDraft();
     }
-    S.draft = d; S.dirty = false; S.pCat = 'all'; S.pQ = ''; S.pServe = '';
+    S.draft = d; S.dirty = false; S.pCat = 'all'; S.pQ = ''; S.pServe = ''; S.pTimes = {};
     viewEl.innerHTML = editorHTML(d, isNew);
     bindEditor();
     renderLines();
@@ -745,7 +747,7 @@
   }
   function commitTime(t, onValue) {
     const r = finishTime(t.value);
-    t.value = r.v;
+    if (!r.bad) t.value = r.v;   /* неверное время не стираем — оно подсвечено красным, чтобы его исправили */
     t.classList.toggle('err', !!r.bad);
     if (r.bad) toast('Время должно быть от 00:00 до 23:59', 'err');
     onValue(t, r.v);
@@ -826,6 +828,23 @@
       if (!ok) return;
       lsDel('vip.draft'); S.dirty = false; renderEditor('');
     };
+    $('#edDelete').onclick = async () => {
+      const d = S.draft;
+      if (!d) return;
+      const isNew = !d.id;
+      const empty = isNew && !S.dirty && !d.lines.length && !String(d.name || '').trim();
+      if (!empty) {
+        const ok = await confirmBox(isNew
+          ? { title: 'Удалить этот бланк?', text: 'Всё, что вы уже ввели в новый бланк, будет удалено. В журнал он не попадёт.', ok: 'Удалить', danger: true }
+          : { title: 'Удалить заказ?', text: 'Заказ № ' + pad(d.no) + ' (' + (String(d.name || '').trim() || 'без имени') + ') будет удалён без возможности восстановления.', ok: 'Удалить', danger: true });
+        if (!ok) return;
+      }
+      clearTimeout(draftTimer);
+      if (isNew) lsDel('vip.draft'); else Store.remove('orders', d.id);
+      S.dirty = false; S.draft = null;
+      if (!empty) toast(isNew ? 'Бланк удалён' : 'Заказ удалён', 'ok');
+      location.hash = '#/orders';
+    };
     $('#saveBtn').onclick = () => saveOrder(false);
     $('#savePrintBtn').onclick = () => saveOrder(true);
 
@@ -834,8 +853,16 @@
     $('#closePicker').onclick = closePicker;
     $('#pScrim').onclick = closePicker;
     $('#pQ').addEventListener('input', e => { S.pQ = e.target.value; renderPickerItems(); });
-    bindTimeInputs($('#picker'), (t, v) => { if (t.id === 'pServe') S.pServe = v; });
-    $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; $('#pServe').classList.remove('err'); };
+    bindTimeInputs($('#picker'), (t, v) => {
+      if (t.id === 'pServe') {
+        S.pServe = v;
+        $$('#pItems .pi-time').forEach(i => { i.placeholder = v || 'ЧЧ:ММ'; });
+      } else {
+        const row = t.closest('.pitem');
+        if (row) { if (v) S.pTimes[row.dataset.id] = v; else delete S.pTimes[row.dataset.id]; }
+      }
+    });
+    $('#pServeClr').onclick = () => { S.pServe = ''; $('#pServe').value = ''; $('#pServe').classList.remove('err'); $$('#pItems .pi-time').forEach(i => { i.placeholder = 'ЧЧ:ММ'; }); };
     $('#sortTime').onclick = () => {
       const before = S.draft.lines.map(l => l.id).join();
       sortLines();
@@ -850,8 +877,9 @@
       renderPickerChips(); renderPickerItems();
     });
     $('#pItems').addEventListener('click', e => {
-      const b = e.target.closest('.pitem');
-      if (b) addMenuItem(b.dataset.id);
+      const row = e.target.closest('.pitem');
+      if (!row || e.target.closest('.pi-time')) return;
+      addMenuItem(row.dataset.id, row);
     });
   }
 
@@ -883,18 +911,29 @@
     items.forEach(i => {
       if (S.pCat === 'all' && i.cat !== last) { html += '<div class="pgroup">' + esc(catName(i.cat)) + '</div>'; last = i.cat; }
       const off = i.active === false;
-      html += '<button type="button" class="pitem' + (off ? ' off' : '') + '" data-id="' + esc(i.id) + '"><span class="pi-main"><b>' + esc(i.name) + '</b><small>' + esc(i.weight || '') + (off ? ' <span class="pi-stop">· стоп</span>' : '') + '</small></span>' +
-        '<span class="pi-price">' + esc(money(i.price)) + '</span><span class="pi-add">' + ic('plus') + '</span>' +
-        (counts[i.id] ? '<i class="pi-badge">×' + esc(fmt(counts[i.id])) + '</i>' : '') + '</button>';
+      html += '<div class="pitem' + (off ? ' off' : '') + '" data-id="' + esc(i.id) + '">' +
+        '<button type="button" class="pi-main"><b>' + esc(i.name) + '</b><small>' + esc(i.weight || '') + (off ? ' <span class="pi-stop">· стоп</span>' : '') + '</small></button>' +
+        '<input class="tm-in pi-time" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="' + esc(S.pServe || 'ЧЧ:ММ') + '" value="' + esc(S.pTimes[i.id] || '') + '" aria-label="Время подачи: ' + esc(i.name) + '">' +
+        '<span class="pi-price">' + esc(money(i.price)) + '</span><button type="button" class="pi-add" aria-label="Добавить в заказ">' + ic('plus') + '</button>' +
+        (counts[i.id] ? '<i class="pi-badge">×' + esc(fmt(counts[i.id])) + '</i>' : '') + '</div>';
     });
     box.innerHTML = html;
     box.scrollTop = keep;
   }
 
-  function addMenuItem(mid) {
+  function addMenuItem(mid, pickRow) {
     const it = S.menu.find(m => m.id === mid);
     if (!it || !S.draft) return;
-    const serve = S.pServe;
+    let own = S.pTimes[mid] || '';
+    const ti = pickRow && pickRow.querySelector('.pi-time');
+    if (ti) {   /* подхватить время, которое ещё не «закоммичено» (клавиатура открыта) */
+      const r = finishTime(ti.value);
+      if (r.bad) { if (!ti.classList.contains('err')) toast('Время должно быть от 00:00 до 23:59', 'err'); ti.classList.add('err'); return; }
+      ti.value = r.v; ti.classList.remove('err');
+      own = r.v;
+      if (r.v) S.pTimes[mid] = r.v; else delete S.pTimes[mid];
+    }
+    const serve = own || S.pServe;
     const ex = S.draft.lines.find(l => l.mid === mid && serveOf(l) === serve && !String(l.note || '').trim());
     let L;
     if (ex) { ex.qty = round2(num(ex.qty) + 1); L = ex; }
@@ -914,6 +953,8 @@
     if (!d) return;
     const act = document.activeElement;
     if (act && act.classList && act.classList.contains('tm-in')) act.blur();   /* зафиксировать недописанное время */
+    const badT = $('#lines .tm-in.err');
+    if (badT) { toast('Исправьте время подачи: от 00:00 до 23:59', 'err'); badT.focus(); badT.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
     const errs = [];
     if (!String(d.name).trim()) errs.push(['name', 'Укажите ФИО гостя']);
     if (!d.date) errs.push(['date', 'Укажите дату']);

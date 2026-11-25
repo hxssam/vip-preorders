@@ -402,13 +402,19 @@ input[type=time], input[type=date] { min-width: 0; max-width: 100%; }
 .pgroup { margin: 12px 0 2px; font-size: 11px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; color: var(--gold); }
 .pgroup:first-child { margin-top: 2px; }
 .pitem {
-  position: relative; display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px 11px 14px; text-align: left;
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px 10px 14px; text-align: left; cursor: pointer;
   border-radius: 13px; border: 1px solid var(--line); background: rgba(255, 255, 255, .025); transition: .15s;
 }
 .pitem:hover { border-color: rgba(217, 180, 90, .5); background: rgba(217, 180, 90, .07); }
 .pitem:active { transform: scale(.985); }
 .pitem.off { opacity: .42; pointer-events: none; }
-.pi-main { flex: 1; min-width: 0; }
+.pi-main { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.pitem input.pi-time { flex: none; width: 70px; height: 38px; padding: 0 4px; text-align: center; font-size: 15px; border-radius: 10px; background: rgba(0, 0, 0, .35); cursor: text; }
+.pitem input.pi-time:focus { background: #101012; }
+.pi-time::placeholder { font-weight: 500; }
+.pi-add { border: 0; padding: 0; cursor: pointer; }
+.ed-danger { display: flex; justify-content: flex-end; margin: 6px 0 22px; }
+@media (max-width: 860px) { .ed-danger .btn { width: 100%; justify-content: center; } }
 .pi-main b { display: block; font-size: 14.5px; font-weight: 600; line-height: 1.25; }
 .pi-main small { color: var(--muted); font-size: 12px; }
 .pi-price { font-weight: 800; color: var(--gold-2); white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 14px; }
@@ -577,7 +583,7 @@ input[type=time], input[type=date] { min-width: 0; max-width: 100%; }
 
 /* на сенсорных экранах поля не меньше 16px — иначе iPhone приближает страницу при вводе */
 @media (pointer: coarse) {
-  input, select, textarea, .ln-note, .mr-price input, .line input.tm-in { font-size: 16px !important; }
+  input, select, textarea, .ln-note, .mr-price input, .line input.tm-in, .pi-time { font-size: 16px !important; }
 }
 
 /* ---------- окно «Поделиться бланком» ---------- */
