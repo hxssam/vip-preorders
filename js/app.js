@@ -34,7 +34,12 @@
     phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
     cloud: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
     utensils: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>',
-    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/>'
+    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h6"/>',
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+    pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+    play: '<path d="M7 4.5v15l12-7.5Z"/>',
+    dice: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>'
   };
   const ic = (n, cls) =>
     '<svg class="ic ' + (cls || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[n] || '') + '</svg>';
@@ -74,7 +79,7 @@
   const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
   const clone = o => JSON.parse(JSON.stringify(o));
 
-  const APP_VERSION = '2026-11-27a';   /* держать в одном значении с version.json */
+  const APP_VERSION = '2026-11-27b';   /* держать в одном значении с version.json */
   const BUILD_DATE = '2026-11-25';     /* часы устройства «раньше» этой даты считаются неверными */
   const AUTO_DEFAULT = 3;              /* автоудаление: дней после даты заказа */
 
@@ -352,6 +357,13 @@
   const loadingHTML = () => '<section class="page"><div class="ogrid"><div class="skeleton"></div><div class="skeleton"></div></div></section>';
   const notFoundHTML = () => '<section class="page">' + emptyHTML('Заказ не найден', 'Возможно, он был удалён.', '<a class="btn primary" href="#/orders">' + ic('back') + 'К журналу</a>') + '</section>';
 
+  /* ====================== роли: персонал / официант ======================
+     Официант — аккаунт «только просмотр»: видит журнал и бланки, но не может ничего создавать,
+     менять и удалять. Это проверяют правила Firestore (firestore.rules); кнопки скрыты лишь для удобства. */
+  const isViewer = () => Store.state.role === 'viewer';
+  const isStaff = () => Store.state.role === 'staff';
+  const canManage = () => Store.state.mode === 'cloud' && isStaff();
+
   /* ============================== журнал ================================ */
   function filteredOrders() {
     const q = S.f.q.trim().toLowerCase();
@@ -382,9 +394,9 @@
     S.draft = null;
     viewEl.innerHTML =
       '<section class="page">' +
-      '<div class="page-head"><div><p class="eyebrow">Журнал</p><h1>Заказы и брони</h1></div>' +
-      '<a class="btn primary" href="#/new">' + ic('plus') + 'Новый заказ</a></div>' +
-      '<button type="button" class="auto-note" id="autoNote"></button>' +
+      '<div class="page-head"><div><p class="eyebrow">' + (isViewer() ? 'Только просмотр' : 'Журнал') + '</p><h1>Заказы и брони</h1></div>' +
+      (isViewer() ? '' : '<a class="btn primary" href="#/new">' + ic('plus') + 'Новый заказ</a>') + '</div>' +
+      (isViewer() ? '' : '<button type="button" class="auto-note" id="autoNote"></button>') +
       '<div class="stats" id="oStats"></div>' +
       '<div class="toolbar">' +
       '<label class="search">' + ic('search') + '<input id="oSearch" type="search" placeholder="Поиск: ФИО, телефон, стол, №, блюдо…" value="' + esc(S.f.q) + '" autocomplete="off"></label>' +
@@ -394,8 +406,7 @@
       Object.keys(STATUS).map(k => '<option value="' + k + '"' + (S.f.status === k ? ' selected' : '') + '>' + STATUS[k] + '</option>').join('') + '</select>' +
       '</div><div id="oList"></div></section>';
 
-    refreshAutoNote();
-    $('#autoNote').onclick = openAutoSettings;
+    if (!isViewer()) { refreshAutoNote(); $('#autoNote').onclick = openAutoSettings; }
     $('#oSearch').addEventListener('input', e => { S.f.q = e.target.value; S.f.limit = 24; renderOrdersBody(); });
     $('#oStatus').addEventListener('change', e => { S.f.status = e.target.value; S.f.limit = 24; renderOrdersBody(); });
     $('#oRange').addEventListener('click', e => {
@@ -456,7 +467,7 @@
       '<div class="ocard-bottom"><div><div class="sum">' + esc(money(num(o.total) || totals(n.lines).sum)) + '</div>' +
       '<span class="by">' + (n.acceptedBy ? 'Принял: ' + esc(n.acceptedBy) : '&nbsp;') + '</span></div>' +
       '<div class="ocard-actions"><button type="button" class="icon-btn" data-act="print" title="Печать / PDF" aria-label="Печать">' + ic('printer') + '</button>' +
-      '<button type="button" class="icon-btn" data-act="edit" title="Изменить" aria-label="Изменить">' + ic('edit') + '</button></div></div>' +
+      (isViewer() ? '' : '<button type="button" class="icon-btn" data-act="edit" title="Изменить" aria-label="Изменить">' + ic('edit') + '</button>') + '</div></div>' +
       '</div></article>';
   }
 
@@ -469,7 +480,8 @@
     if (!all.length) {
       box.innerHTML = S.orders.length
         ? emptyHTML('Ничего не найдено', 'Измените поиск или фильтры.')
-        : emptyHTML('Заказов пока нет', 'Создайте первый бланк — он сразу появится здесь.', '<a class="btn primary" href="#/new">' + ic('plus') + 'Новый заказ</a>');
+        : (isViewer() ? emptyHTML('Заказов пока нет', 'Когда появятся новые заказы, они сразу отобразятся здесь.')
+          : emptyHTML('Заказов пока нет', 'Создайте первый бланк — он сразу появится здесь.', '<a class="btn primary" href="#/new">' + ic('plus') + 'Новый заказ</a>'));
       return;
     }
     const shown = all.slice(0, S.f.limit);
@@ -490,7 +502,7 @@
   /* ============================ просмотр бланка ========================= */
   function noTimeBar(n, id) {
     const miss = noTimeLines(n.lines);
-    if (!miss.length) return '';
+    if (!miss.length || isViewer()) return '';
     const names = miss.slice(0, 3).map(l => esc(String(l.name).trim())).join(', ') + (miss.length > 3 ? ' и ещё ' + (miss.length - 3) : '');
     return '<div class="nt-bar" role="status">' + ic('clock') + '<span>Без времени подачи: <b>' + miss.length + '</b> — ' + names + '</span>' +
       '<a class="btn sm" href="#/edit/' + encodeURIComponent(id) + '">Указать время</a></div>';
@@ -506,10 +518,11 @@
       '<div class="view-bar"><a class="btn ghost" href="#/orders">' + ic('back') + '<span>Журнал</span></a>' +
       '<div class="view-title"><h1>Заказ № ' + esc(pad(n.no)) + '</h1><span id="vSt">' + stPill(n.status) + '</span></div>' +
       '<div class="view-actions">' +
-      '<select id="vStatus" class="select" aria-label="Статус заказа">' + Object.keys(STATUS).map(k => '<option value="' + k + '"' + (n.status === k ? ' selected' : '') + '>' + STATUS[k] + '</option>').join('') + '</select>' +
-      '<a class="btn" href="#/edit/' + encodeURIComponent(o.id) + '">' + ic('edit') + '<span>Изменить</span></a>' +
-      '<button type="button" class="btn" id="vDup">' + ic('copy') + '<span>Дублировать</span></button>' +
-      '<button type="button" class="btn danger" id="vDel">' + ic('trash') + '<span>Удалить</span></button>' +
+      (isViewer() ? '' :
+        '<select id="vStatus" class="select" aria-label="Статус заказа">' + Object.keys(STATUS).map(k => '<option value="' + k + '"' + (n.status === k ? ' selected' : '') + '>' + STATUS[k] + '</option>').join('') + '</select>' +
+        '<a class="btn" href="#/edit/' + encodeURIComponent(o.id) + '">' + ic('edit') + '<span>Изменить</span></a>' +
+        '<button type="button" class="btn" id="vDup">' + ic('copy') + '<span>Дублировать</span></button>' +
+        '<button type="button" class="btn danger" id="vDel">' + ic('trash') + '<span>Удалить</span></button>') +
       '<button type="button" class="btn primary" id="vPrint">' + ic('printer') + '<span>Печать / PDF</span></button>' +
       '<button type="button" class="btn wide" id="vShare">' + ic('share') + '<span>Поделиться</span></button>' +
       '</div></div>' +
@@ -523,6 +536,7 @@
 
     $('#vPrint').onclick = () => printOrder(o);
     $('#vShare').onclick = () => openShare(o);
+    if (isViewer()) { fitPapers(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitPapers).catch(() => { }); return; }
     $('#vStatus').onchange = e => {
       Store.save('orders', o.id, Object.assign({}, o, { status: e.target.value, updatedAt: Date.now() }));
       toast('Статус: ' + STATUS[e.target.value], 'ok');
@@ -1400,7 +1414,7 @@
     return Store.batch(ops);
   }
   function maybeSeed() {
-    if (S.seedChecked) return;
+    if (S.seedChecked || !isStaff()) return;
     if (!Store.isLoaded('categories') || !Store.isLoaded('menu') || !Store.isLoaded('meta')) return;
     if (!Store.isSynced()) return;
     S.seedChecked = true;
@@ -1443,7 +1457,7 @@
   let cleaning = false, cleanTimer = null;
   function scheduleCleanup(force) { clearTimeout(cleanTimer); cleanTimer = setTimeout(() => autoCleanup(!!force), force ? 200 : 1500); }
   async function autoCleanup(force) {
-    if (cleaning || !S.appShown || autoDays() <= 0) return;
+    if (cleaning || !S.appShown || !isStaff() || autoDays() <= 0) return;
     if (!Store.isLoaded('orders') || !Store.isLoaded('meta')) return;
     if (Store.state.mode === 'cloud' && !Store.isSynced()) return;
     if ($('.modal')) { scheduleCleanup(force); return; }
@@ -1517,6 +1531,144 @@
     $('button', el).onclick = () => { location.replace(location.pathname + '?v=' + encodeURIComponent(ver) + (location.hash || '')); };
   }
 
+  /* ========================= официанты (только просмотр) ===================== */
+  const TR = { 'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e', 'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'c', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya' };
+  const toLogin = name => String(name || '').toLowerCase().split('').map(ch => (TR[ch] != null ? TR[ch] : ch)).join('').replace(/[^a-z0-9._-]+/g, '').slice(0, 20);
+  const LOGIN_RE = /^[a-z0-9._-]{3,24}$/;
+  function genPassword() {
+    const A = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789', r = new Uint32Array(8);
+    (window.crypto || window.msCrypto).getRandomValues(r);
+    return Array.from(r, x => A[x % A.length]).join('');
+  }
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
+    return new Promise((res, rej) => {
+      const ta = document.createElement('textarea');
+      ta.value = t; ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy') ? res() : rej(); } catch (e) { rej(e); } finally { ta.remove(); }
+    });
+  }
+  function openWaiters() {
+    const m = openModal('<h3>Официанты</h3>' +
+      '<p class="modal-text">Эти аккаунты могут только <b>смотреть</b> заказы. Создавать, менять и удалять заказы, открывать меню и настройки они не могут.</p>' +
+      '<div id="wList" class="wt-list"></div><div id="wBox"></div>' +
+      '<div class="modal-actions"><button type="button" class="btn primary" data-close>Готово</button></div>', 'sm wt-modal');
+    const list = $('#wList', m), box = $('#wBox', m);
+    const rows = () => Store.get('users').filter(u => u.role === 'viewer').sort((a, b) => String(a.name || a.username).localeCompare(String(b.name || b.username), 'ru'));
+    const drawList = () => {
+      const us = rows();
+      list.innerHTML = us.length ? us.map(u => {
+        const on = u.active !== false;
+        return '<div class="wt-row' + (on ? '' : ' off') + '" data-uid="' + esc(u.id) + '">' +
+          '<span class="wt-av">' + esc(String(u.name || u.username || '?').trim().charAt(0).toUpperCase()) + '</span>' +
+          '<span class="wt-info"><b>' + esc(u.name || u.username) + '</b><small>логин: ' + esc(u.username) + (on ? '' : ' · отключён') + '</small></span>' +
+          '<button type="button" class="icon-btn" data-wa="toggle" title="' + (on ? 'Отключить доступ' : 'Включить доступ') + '" aria-label="' + (on ? 'Отключить доступ' : 'Включить доступ') + '">' + ic(on ? 'pause' : 'play') + '</button>' +
+          '<button type="button" class="icon-btn danger" data-wa="del" title="Удалить" aria-label="Удалить">' + ic('trash') + '</button></div>';
+      }).join('') : '<p class="wt-empty">Пока нет ни одного официанта.</p>';
+    };
+    let unwatch = null;
+    unwatch = Store.watch('users', () => { if (!document.body.contains(m)) { if (unwatch) unwatch(); return; } drawList(); });
+    const showAddBtn = () => { box.innerHTML = '<button type="button" class="btn wt-add" data-wa="new">' + ic('plus') + 'Добавить официанта</button>'; };
+    showAddBtn();
+
+    const showForm = () => {
+      box.innerHTML = '<form id="wForm" class="wt-form" novalidate autocomplete="off">' +
+        '<label class="fld"><span>Имя</span><input name="name" type="text" maxlength="40" placeholder="Например: Иван" autocomplete="off"></label>' +
+        '<label class="fld"><span>Логин <i>латиницей</i></span><input name="login" type="text" maxlength="24" placeholder="ivan" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+        '<div class="fld"><span>Пароль <i>от 6 символов</i></span><div class="wt-pass"><input name="pass" type="text" maxlength="40" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Пароль">' +
+        '<button type="button" class="btn" data-wa="gen" title="Сгенерировать пароль">' + ic('dice') + '<span>Сгенерировать</span></button></div></div>' +
+        '<p class="login-err" id="wErr" role="alert"></p>' +
+        '<div class="wt-form-actions"><button type="button" class="btn" data-wa="cancel">Отмена</button><button type="submit" class="btn primary" id="wCreate">Создать</button></div></form>';
+      const f = $('#wForm', box);
+      let loginTouched = false;
+      f.elements.pass.value = genPassword();
+      f.elements.name.addEventListener('input', () => { if (!loginTouched) f.elements.login.value = toLogin(f.elements.name.value); });
+      f.elements.login.addEventListener('input', () => { loginTouched = true; });
+      f.addEventListener('submit', async e => {
+        e.preventDefault();
+        const name = f.elements.name.value.trim(), login = f.elements.login.value.trim().toLowerCase(), pass = f.elements.pass.value.trim();
+        const err = $('#wErr', f), btn = $('#wCreate', f);
+        const bad = (msg, el) => { err.textContent = msg; if (el) { el.classList.add('err'); el.focus(); } };
+        $$('.err', f).forEach(x => x.classList.remove('err'));
+        if (!name) return bad('Укажите имя официанта.', f.elements.name);
+        if (!LOGIN_RE.test(login)) return bad('Логин: 3–24 символа, только латинские буквы, цифры и . _ -', f.elements.login);
+        if (rows().some(u => u.username === login)) return bad('Такой логин уже есть в списке.', f.elements.login);
+        if (pass.length < 6) return bad('Пароль — не меньше 6 символов.', f.elements.pass);
+        err.textContent = ''; btn.disabled = true; btn.textContent = 'Создаём…';
+        try {
+          await Store.createViewer(login, name, pass);
+          showCreds(name, login, pass);
+        } catch (ex) {
+          btn.disabled = false; btn.textContent = 'Создать';
+          if (ex && ex.code === 'permission-denied') err.textContent = 'Нет прав: обновите правила Firestore (файл firestore.rules, см. README).';
+          else err.textContent = Store.authErrorText(ex);
+        }
+      });
+      f.elements.name.focus();
+    };
+    const showCreds = (name, login, pass) => {
+      const url = location.origin + location.pathname.replace(/index\.html$/, '');
+      const text = 'ВИАЙПИ РЕСТОБАР · заказы (просмотр)\nСсылка: ' + url + '\nЛогин: ' + login + '\nПароль: ' + pass;
+      box.innerHTML = '<div class="wt-creds"><div class="wt-ok">' + ic('check') + '<b>Готово: ' + esc(name) + '</b></div>' +
+        '<p class="modal-text">Передайте официанту. Пароль нигде больше не отображается — сохраните его сейчас.</p>' +
+        '<dl><dt>Ссылка</dt><dd>' + esc(url) + '</dd><dt>Логин</dt><dd><b>' + esc(login) + '</b></dd><dt>Пароль</dt><dd><b>' + esc(pass) + '</b></dd></dl>' +
+        '<div class="wt-form-actions"><button type="button" class="btn" data-wa="copy">' + ic('copy') + '<span>Копировать</span></button>' +
+        (navigator.share ? '<button type="button" class="btn" data-wa="share">' + ic('share') + '<span>Отправить</span></button>' : '') +
+        '<button type="button" class="btn primary" data-wa="again">' + ic('plus') + '<span>Ещё один</span></button></div></div>';
+      box.dataset.text = text;
+    };
+
+    m.addEventListener('click', async e => {
+      const b = e.target.closest('[data-wa],[data-close]');
+      if (!b) return;
+      if (b.dataset.close != null) { closeModal(); return; }
+      const a = b.dataset.wa;
+      if (a === 'new' || a === 'again') showForm();
+      else if (a === 'cancel') showAddBtn();
+      else if (a === 'gen') { const f = $('#wForm', box); if (f) { f.elements.pass.value = genPassword(); f.elements.pass.classList.remove('err'); } }
+      else if (a === 'copy') copyText(box.dataset.text || '').then(() => toast('Скопировано', 'ok'), () => toast('Не удалось скопировать', 'err'));
+      else if (a === 'share') navigator.share({ text: box.dataset.text || '' }).catch(() => { });
+      else if (a === 'toggle' || a === 'del') {
+        const row = b.closest('.wt-row'), u = row && Store.get('users').find(x => x.id === row.dataset.uid);
+        if (!u) return;
+        if (a === 'toggle') {
+          const on = u.active !== false;
+          await Store.setViewerActive(u.id, !on);
+          toast(on ? 'Доступ отключён: ' + (u.name || u.username) : 'Доступ включён: ' + (u.name || u.username), 'ok');
+        } else {
+          const ok = await confirmBox({ title: 'Удалить официанта?', text: (u.name || u.username) + ' (логин ' + u.username + ') сразу потеряет доступ к заказам.', ok: 'Удалить', danger: true });
+          if (ok) { await Store.removeViewer(u.id); toast('Официант удалён', 'ok'); }
+          openWaiters();   /* confirmBox закрыл окно — открываем список снова */
+        }
+      }
+    });
+  }
+
+  /* смена собственного пароля (для официанта) */
+  function openPassword() {
+    const m = openModal('<h3>Сменить пароль</h3>' +
+      '<form id="pwForm" novalidate autocomplete="off" class="wt-form">' +
+      '<label class="fld"><span>Текущий пароль</span><input name="old" type="password" autocomplete="current-password"></label>' +
+      '<label class="fld"><span>Новый пароль <i>от 6 символов</i></span><input name="n1" type="password" autocomplete="new-password"></label>' +
+      '<label class="fld"><span>Повторите новый пароль</span><input name="n2" type="password" autocomplete="new-password"></label>' +
+      '<p class="login-err" id="pwErr" role="alert"></p>' +
+      '<div class="wt-form-actions"><button type="button" class="btn" data-no>Отмена</button><button type="submit" class="btn primary" id="pwOk">Сохранить</button></div></form>', 'sm');
+    const f = $('#pwForm', m), err = $('#pwErr', m);
+    $('[data-no]', m).onclick = closeModal;
+    f.addEventListener('submit', async e => {
+      e.preventDefault();
+      const o = f.elements.old.value, a = f.elements.n1.value, b = f.elements.n2.value;
+      if (!o) { err.textContent = 'Введите текущий пароль.'; return; }
+      if (a.length < 6) { err.textContent = 'Новый пароль — не меньше 6 символов.'; return; }
+      if (a !== b) { err.textContent = 'Новые пароли не совпадают.'; return; }
+      err.textContent = ''; $('#pwOk', m).disabled = true;
+      try { await Store.changePassword(o, a); closeModal(); toast('Пароль изменён', 'ok'); }
+      catch (ex) { $('#pwOk', m).disabled = false; err.textContent = (ex && /wrong-password|invalid-credential/.test(ex.code || '')) ? 'Текущий пароль неверный.' : Store.authErrorText(ex); }
+    });
+    f.elements.old.focus();
+  }
+
   /* ======================== шапка, вход, состояние ====================== */
   const NAV = [['orders', 'list', 'Журнал'], ['new', 'plus', 'Новый заказ'], ['menu', 'book', 'Меню']];
   function setupChrome() {
@@ -1536,9 +1688,13 @@
     const st = Store.state;
     const el = document.createElement('div');
     el.className = 'popover';
-    el.innerHTML = '<div class="who"><small>' + (st.mode === 'cloud' ? 'Вы вошли как' : 'Режим') + '</small><b>' + esc(st.mode === 'cloud' ? ((st.user && st.user.email) || '') : 'Локальный (без входа)') + '</b></div>' +
-      '<button type="button" data-a="backup">' + ic('download') + 'Резервная копия (JSON)</button>' +
-      '<button type="button" data-a="auto">' + ic('trash') + (autoDays() > 0 ? 'Автоудаление: ' + autoDays() + ' ' + daysWord(autoDays()) : 'Автоудаление: выкл.') + '</button>' +
+    const viewer = isViewer(), pr = st.profile || {};
+    const who = viewer ? ((pr.name || pr.username || 'Официант') + (pr.username ? ' · @' + pr.username : '')) : (st.mode === 'cloud' ? ((st.user && st.user.email) || '') : 'Локальный (без входа)');
+    el.innerHTML = '<div class="who"><small>' + (viewer ? 'Официант · только просмотр' : st.mode === 'cloud' ? 'Вы вошли как' : 'Режим') + '</small><b>' + esc(who) + '</b></div>' +
+      (viewer ? '<button type="button" data-a="pass">' + ic('lock') + 'Сменить пароль</button>' :
+        '<button type="button" data-a="backup">' + ic('download') + 'Резервная копия (JSON)</button>' +
+        '<button type="button" data-a="auto">' + ic('trash') + (autoDays() > 0 ? 'Автоудаление: ' + autoDays() + ' ' + daysWord(autoDays()) : 'Автоудаление: выкл.') + '</button>' +
+        (canManage() ? '<button type="button" data-a="waiters">' + ic('users') + 'Официанты (просмотр)</button>' : '')) +
       (st.mode === 'cloud' ? '<button type="button" data-a="logout">' + ic('logout') + 'Выйти</button>' : '') +
       '<div class="ver">Версия ' + esc(APP_VERSION) + '</div>';
     $('.top-right').appendChild(el);
@@ -1548,6 +1704,8 @@
       el.remove();
       if (b.dataset.a === 'backup') exportBackup();
       if (b.dataset.a === 'auto') openAutoSettings();
+      if (b.dataset.a === 'waiters') openWaiters();
+      if (b.dataset.a === 'pass') openPassword();
       if (b.dataset.a === 'logout') Store.signOut();
     });
     setTimeout(() => {
@@ -1615,23 +1773,37 @@
     $('#app').hidden = true;
     const el = $('#login');
     el.hidden = false;
-    if (el.dataset.built === 'login') { const pf = $('#loginForm'); if (pf) pf.elements.pass.value = ''; return; }
+    if (el.dataset.built === 'login') { const pf = $('#loginForm'); if (pf) { pf.elements.pass.value = ''; const lb = $('#loginBtn'); lb.disabled = false; lb.textContent = 'Войти'; } return; }
     el.dataset.built = 'login';
     el.innerHTML = '<div class="login-card"><img src="assets/logo-gold.png" alt="ВИАЙПИ"><h1>ВИАЙПИ</h1><p class="sub">Искусство отдыха · заказы</p>' +
       '<form id="loginForm" novalidate>' +
-      '<label class="fld"><span>Email</span><input name="email" type="email" autocomplete="username" inputmode="email" required></label>' +
+      '<label class="fld"><span>Логин или email</span><input name="email" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>' +
       '<label class="fld"><span>Пароль</span><input name="pass" type="password" autocomplete="current-password" required></label>' +
       '<p class="login-err" id="loginErr" role="alert"></p>' +
       '<button type="submit" class="btn primary" id="loginBtn">Войти</button></form></div>';
     const f = $('#loginForm');
     f.addEventListener('submit', e => {
       e.preventDefault();
-      const email = f.elements.email.value.trim(), pass = f.elements.pass.value;
+      const login = f.elements.email.value.trim(), pass = f.elements.pass.value;
       const err = $('#loginErr'), btn = $('#loginBtn');
-      if (!email || !pass) { err.textContent = 'Введите email и пароль.'; return; }
+      if (!login || !pass) { err.textContent = 'Введите логин (или email) и пароль.'; return; }
       err.textContent = ''; btn.disabled = true;
-      Store.signIn(email, pass).catch(ex => { err.textContent = Store.authErrorText(ex); }).then(() => { btn.disabled = false; });
+      Store.signIn(Store.loginToEmail(login), pass).then(() => { btn.textContent = 'Входим…'; }, ex => { err.textContent = Store.authErrorText(ex); btn.disabled = false; });
     });
+  }
+  function showNoAccess(role) {
+    $('#app').hidden = true;
+    const el = $('#login');
+    el.hidden = false;
+    if (el.dataset.built === 'noaccess:' + role) return;
+    el.dataset.built = 'noaccess:' + role;
+    const email = (Store.state.user && Store.state.user.email) || '';
+    el.innerHTML = '<div class="login-card"><img src="assets/logo-gold.png" alt="ВИАЙПИ"><h1>ВИАЙПИ</h1>' +
+      '<p class="sub">' + (role === 'disabled' ? 'Доступ приостановлен' : 'Нет доступа') + '</p>' +
+      '<p class="na-text">' + (role === 'disabled' ? 'Ваш доступ отключён администратором.' : 'У этой учётной записи нет доступа к заказам.') + ' Обратитесь к администратору.</p>' +
+      (email ? '<p class="na-mail">' + esc(email.replace(/@waiter\.vip$/, '')) + '</p>' : '') +
+      '<button type="button" class="btn primary" id="naOut">Выйти</button></div>';
+    $('#naOut').onclick = () => Store.signOut();
   }
   function showFatal() {
     $('#app').hidden = true;
@@ -1657,9 +1829,19 @@
       if (!st.authReady) return;
       if (st.loadError) { showFatal(); return; }
       if (!st.user) {
-        if (S.appShown) { S.appShown = false; S.seedChecked = false; closeModal(); }
+        if (S.appShown) { S.appShown = false; S.seedChecked = false; S.cleanedOn = ''; closeModal(); }
+        document.body.classList.remove('viewer');
         showLogin();
-      } else if (!S.appShown) showApp();
+      } else if (st.role === null) {
+        /* роль ещё определяется — экран входа остаётся */
+      } else if (st.role === 'none' || st.role === 'disabled') {
+        if (S.appShown) { S.appShown = false; closeModal(); }
+        document.body.classList.remove('viewer');
+        showNoAccess(st.role);
+      } else {
+        document.body.classList.toggle('viewer', st.role === 'viewer');
+        if (!S.appShown) showApp();
+      }
     } else if (!S.appShown) showApp();
     maybeSeed();
   }
@@ -1685,6 +1867,7 @@
   function route() {
     if (!S.appShown) return;
     const r = parseRoute();
+    if (isViewer() && r.name !== 'orders' && r.name !== 'view') { location.replace('#/orders'); return; }   /* официанту — только журнал и просмотр */
     S.lastHash = location.hash || '#/orders';
     S.pendingRoute = false;
     closeModal();
