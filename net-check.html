@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#09090a">
+<title>Проверка связи — ВИАЙПИ</title>
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<style>
+  :root { --bg: #09090a; --panel: #141416; --line: rgba(255,255,255,.1); --text: #f3efe6; --muted: #a39d90; --gold: #d9b45a; --gold-2: #f3dc95; --ok: #5fd08a; --bad: #ff7b6b; --warn: #f0b44c; }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(900px 500px at 50% -10%, rgba(217,180,90,.1), transparent 70%), var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; padding: max(20px, env(safe-area-inset-top)) 16px 40px; }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 14px; margin: 6px 0 22px; }
+  header img { width: 52px; height: auto; }
+  h1 { margin: 0; font: 700 28px/1.1 Georgia, "Times New Roman", serif; color: var(--gold-2); }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  .verdict { border-radius: 18px; padding: 18px 18px 16px; border: 1px solid var(--line); background: var(--panel); margin-bottom: 18px; }
+  .verdict b { display: block; font-size: 20px; margin-bottom: 6px; }
+  .verdict p { margin: 0 0 8px; color: var(--muted); }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict.ok { border-color: rgba(95,208,138,.5); background: rgba(95,208,138,.07); }
+  .verdict.ok b { color: var(--ok); }
+  .verdict.bad { border-color: rgba(255,123,107,.5); background: rgba(255,123,107,.07); }
+  .verdict.bad b { color: var(--bad); }
+  .verdict.warn { border-color: rgba(240,180,76,.5); background: rgba(240,180,76,.07); }
+  .verdict.warn b { color: var(--warn); }
+  .verdict.wait b { color: var(--gold-2); }
+  ul { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 8px; }
+  li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+  li .dot { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 800; background: rgba(255,255,255,.08); color: var(--muted); }
+  li.ok .dot { background: rgba(95,208,138,.18); color: var(--ok); }
+  li.bad .dot { background: rgba(255,123,107,.18); color: var(--bad); }
+  li.wait .dot { animation: p 1s ease-in-out infinite alternate; }
+  @keyframes p { from { opacity: .35; } to { opacity: 1; } }
+  li div { flex: 1; min-width: 0; }
+  li strong { display: block; font-size: 15px; }
+  li small { display: block; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+  li em { flex: none; font-style: normal; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  li.bad em { color: var(--bad); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button, .btn { font: inherit; font-weight: 700; min-height: 48px; padding: 0 20px; border-radius: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.18); }
+  button.primary { color: #1a1407; border-color: transparent; background: linear-gradient(135deg, #f3dc95, #c9a14a); }
+  button:disabled { opacity: .55; }
+  .tip { margin: 22px 2px 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+  .tip b { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="assets/logo-gold.png" alt="">
+    <div><h1>Проверка связи</h1><p>Что открывается у вас без VPN</p></div>
+  </header>
+
+  <div class="verdict wait" id="verdict"><b>Проверяю…</b><p>Это займёт несколько секунд.</p></div>
+  <ul id="list"></ul>
+  <div class="row">
+    <button type="button" class="primary" id="again">Проверить снова</button>
+    <button type="button" id="copy">Скопировать отчёт</button>
+    <a class="btn" href="./">Открыть приложение</a>
+  </div>
+  <p class="tip">Проверка идёт с <b>этого</b> телефона или компьютера и этой сети. Выключите VPN, чтобы увидеть реальную картину.
+    После первого успешного открытия приложение сохраняется на устройстве и дальше запускается даже без интернета.</p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var SDK = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+  var base = location.href.replace(/[^\/]*$/, '');
+  var T = [
+    { id: 'site', name: 'Этот сайт (приложение)', host: location.host, url: base + 'version.json?t=' + Date.now(), same: true },
+    { id: 'sdk', name: 'Библиотека Firebase', host: 'www.gstatic.com', url: SDK, crit: true },
+    { id: 'db', name: 'База данных (Firestore)', host: 'firestore.googleapis.com', url: 'https://firestore.googleapis.com/', crit: true },
+    { id: 'auth', name: 'Вход в аккаунт', host: 'identitytoolkit.googleapis.com', url: 'https://identitytoolkit.googleapis.com/', crit: true },
+    { id: 'token', name: 'Обновление входа', host: 'securetoken.googleapis.com', url: 'https://securetoken.googleapis.com/', crit: true },
+    { id: 'fonts', name: 'Шрифты Google (не обязательно)', host: 'fonts.googleapis.com', url: 'https://fonts.googleapis.com/css2?family=Manrope', crit: false },
+    { id: 'ya', name: 'Яндекс (для сравнения)', host: 'yandex.ru', url: 'https://yandex.ru/robots.txt', ctrl: true }
+  ];
+  var res = {}, list = document.getElementById('list'), verdict = document.getElementById('verdict');
+
+  function probe(t, ms) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null, t0 = performance.now();
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    var opts = { cache: 'no-store' };
+    if (!t.same) opts.mode = 'no-cors';
+    if (ctl) opts.signal = ctl.signal;
+    return fetch(t.url, opts).then(function (r) {
+      return { ok: t.same ? r.ok : true, ms: Math.round(performance.now() - t0) };
+    }, function () {
+      return { ok: false, ms: Math.round(performance.now() - t0), timeout: !!(ctl && ctl.signal.aborted) };
+    }).then(function (r) { clearTimeout(timer); return r; });
+  }
+  function draw() {
+    list.innerHTML = '';
+    T.forEach(function (t) {
+      var r = res[t.id], li = document.createElement('li');
+      li.className = r ? (r.ok ? 'ok' : 'bad') : 'wait';
+      li.innerHTML = '<span class="dot">' + (r ? (r.ok ? '✓' : '✕') : '…') + '</span><div><strong></strong><small></small></div><em></em>';
+      li.querySelector('strong').textContent = t.name;
+      li.querySelector('small').textContent = t.host;
+      li.querySelector('em').textContent = r ? (r.ok ? r.ms + ' мс' : (r.timeout ? 'не отвечает' : 'заблокировано')) : '';
+      list.appendChild(li);
+    });
+  }
+  function judge() {
+    var crit = T.filter(function (t) { return t.crit; }), bad = crit.filter(function (t) { return !res[t.id].ok; });
+    var ya = res.ya.ok, fonts = res.fonts.ok, v = { cls: 'ok', title: '', lines: [] };
+    if (!ya && bad.length === crit.length) {
+      v.cls = 'bad'; v.title = 'Нет интернета';
+      v.lines = ['Не открывается даже Яндекс. Проверьте Wi-Fi или мобильную сеть и нажмите «Проверить снова».'];
+    } else if (!bad.length) {
+      v.cls = 'ok'; v.title = 'Всё доступно — VPN не нужен';
+      v.lines = ['Серверы базы данных и входа отвечают. Приложение должно работать без VPN.'];
+      if (!fonts) v.lines.push('Шрифты Google не загрузились — приложение использует запасные, это не мешает работе.');
+    } else if (bad.some(function (t) { return t.id === 'db' || t.id === 'auth' || t.id === 'token'; })) {
+      v.cls = 'bad'; v.title = 'Серверы Google заблокированы в этой сети';
+      v.lines = ['Без VPN база данных недоступна: приложение откроется (если уже открывалось раньше), покажет сохранённые на устройстве заказы и отправит новое, когда связь появится.',
+        'Чтобы работать полностью без VPN, базу нужно перенести на российский сервер. Нажмите «Скопировать отчёт» и отправьте его Claude — он подготовит перенос.'];
+    } else {
+      v.cls = 'warn'; v.title = 'Почти всё доступно';
+      v.lines = ['Библиотека Firebase не загрузилась. Если приложение уже открывалось на этом устройстве, оно возьмёт её из памяти и будет работать. Новому устройству нужно один раз открыть приложение с рабочей связью.'];
+    }
+    verdict.className = 'verdict ' + v.cls;
+    verdict.innerHTML = '<b></b>' + v.lines.map(function () { return '<p></p>'; }).join('');
+    verdict.querySelector('b').textContent = v.title;
+    var ps = verdict.querySelectorAll('p'); v.lines.forEach(function (l, i) { ps[i].textContent = l; });
+  }
+  function run() {
+    res = {}; draw();
+    verdict.className = 'verdict wait'; verdict.innerHTML = '<b>Проверяю…</b><p>Это займёт несколько секунд.</p>';
+    document.getElementById('again').disabled = true;
+    Promise.all(T.map(function (t) {
+      return probe(t, 9000).then(function (r) { res[t.id] = r; draw(); });
+    })).then(function () { judge(); document.getElementById('again').disabled = false; });
+  }
+  function report() {
+    var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    var lines = ['ВИАЙПИ · проверка связи · ' + pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()), navigator.userAgent];
+    T.forEach(function (t) { var r = res[t.id]; lines.push(t.host + ' — ' + (!r ? '…' : (r.ok ? 'OK ' + r.ms + ' мс' : (r.timeout ? 'НЕТ ОТВЕТА' : 'ЗАБЛОКИРОВАНО')))); });
+    lines.push('Вывод: ' + verdict.querySelector('b').textContent);
+    return lines.join('\n');
+  }
+  document.getElementById('again').onclick = run;
+  document.getElementById('copy').onclick = function () {
+    var btn = this, txt = report(), done = function () { btn.textContent = 'Скопировано ✓'; setTimeout(function () { btn.textContent = 'Скопировать отчёт'; }, 2200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, fallback); else fallback();
+    function fallback() {
+      var ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { window.prompt('Скопируйте отчёт:', txt); }
+      ta.remove();
+    }
+  };
+  run();
+})();
+</script>
+</body>
+</html>

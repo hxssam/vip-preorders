@@ -32,7 +32,8 @@
     online: navigator.onLine !== false,
     pending: false,
     error: null,       // 'permission' | 'sync' | 'write' | 'storage' | null
-    loadError: false   // не удалось загрузить Firebase
+    loadError: false,  // не удалось загрузить Firebase
+    serverDown: false  // интернет есть, но сервер Google (Firestore) не отвечает — работаем с данными устройства
   };
   var fb = null;
   var unsubs = [];
@@ -130,17 +131,30 @@
     return !!(fromServer.categories && fromServer.menu && fromServer.meta);
   }
 
+  /* ---------- «сервер не отвечает» ---------- */
+  var downTimer = null;
+  function watchServer() {
+    clearTimeout(downTimer);
+    downTimer = setTimeout(function check() {
+      if (!unsubs.length) return;                                 /* вышли из аккаунта */
+      var down = state.online && !isSynced();
+      if (down !== state.serverDown) { state.serverDown = down; emitState(); }
+      downTimer = setTimeout(check, 10000);
+    }, 12000);
+  }
+
   /* ---------- Firebase ---------- */
   function startListeners(cols, uid) {
     if (unsubs.length || !fb) return;
     var F = fb.F;
+    watchServer();
     cols.forEach(function (col) {
       var unsub = F.onSnapshot(
         F.collection(fb.db, col),
         { includeMetadataChanges: true },
         function (snap) {
           var md = snap.metadata;
-          if (!md.fromCache) fromServer[col] = true;
+          if (!md.fromCache) { fromServer[col] = true; if (state.serverDown && isSynced()) state.serverDown = false; }
           pendingCol[col] = md.hasPendingWrites;
           state.pending = ALL.some(function (c) { return pendingCol[c]; });
           if (state.error === 'permission' || state.error === 'sync') state.error = null;
@@ -181,6 +195,8 @@
       loaded[c] = false; fromServer[c] = false; pendingCol[c] = false;
     });
     state.pending = false;
+    state.serverDown = false;
+    clearTimeout(downTimer);
   }
 
   /* ---------- роли: персонал / официант (только просмотр) ---------- */
@@ -244,7 +260,7 @@
         finish();
       }, 15000);
 
-      var base = 'https://www.gstatic.com/firebasejs/' + FB_VERSION + '/';
+      var base = window.VIP_FB_BASE || ('https://www.gstatic.com/firebasejs/' + FB_VERSION + '/');
       Promise.all([
         import(base + 'firebase-app.js'),
         import(base + 'firebase-auth.js'),
@@ -255,13 +271,21 @@
         var db;
         try {
           db = F.initializeFirestore(app, {
-            localCache: F.persistentLocalCache({ tabManager: F.persistentMultipleTabManager() })
+            localCache: F.persistentLocalCache({ tabManager: F.persistentMultipleTabManager() }),
+            /* провайдеры и «умные» фильтры (в т.ч. в России) нередко ломают потоковое соединение —
+               SDK сам переключается на обычные запросы (long polling), если поток не устанавливается */
+            experimentalAutoDetectLongPolling: true
           });
         } catch (e) {
           console.warn('Офлайн-кэш недоступен, работаем без него', e);
           db = F.getFirestore(app);
         }
-        var auth = Au.getAuth(app);
+        var auth;
+        try {
+          /* без popup/redirect-модуля библиотека не подгружает apis.google.com — меньше зависимостей от Google;
+             вход по email/паролю этого не требует */
+          auth = Au.initializeAuth(app, { persistence: [Au.indexedDBLocalPersistence, Au.browserLocalPersistence, Au.browserSessionPersistence].filter(Boolean) });
+        } catch (e) { auth = Au.getAuth(app); }
         fb = { A: A, Au: Au, F: F, app: app, db: db, auth: auth };
         state.loadError = false;
         Au.onAuthStateChanged(auth, function (user) {

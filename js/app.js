@@ -39,7 +39,9 @@
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
     pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
     play: '<path d="M7 4.5v15l12-7.5Z"/>',
-    dice: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>'
+    dice: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>',
+    zin: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6M8 11h6"/>',
+    zout: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M8 11h6"/>'
   };
   const ic = (n, cls) =>
     '<svg class="ic ' + (cls || '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[n] || '') + '</svg>';
@@ -79,7 +81,7 @@
   const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
   const clone = o => JSON.parse(JSON.stringify(o));
 
-  const APP_VERSION = '2026-11-27b';   /* держать в одном значении с version.json */
+  const APP_VERSION = '2026-11-27c';   /* держать в одном значении с version.json */
   const BUILD_DATE = '2026-11-25';     /* часы устройства «раньше» этой даты считаются неверными */
   const AUTO_DEFAULT = 3;              /* автоудаление: дней после даты заказа */
 
@@ -281,6 +283,213 @@
     }).catch(() => { const p = $('#shPrev'); if (p) p.textContent = 'Не удалось создать изображение. Обновите страницу и попробуйте снова.'; });
   }
 
+  /* ========================= увеличение бланка ========================== */
+  /* Полноэкранный просмотр: бланк рисуется векторно (текст чёткий при любом масштабе).
+     Щипок двумя пальцами, двойное касание, колесо мыши, перетаскивание; «Назад» на телефоне закрывает окно. */
+  function openZoom(o, fromList) {
+    closeZoom(true);
+    const n = normOrder(o);
+    const el = document.createElement('div');
+    el.className = 'zoom';
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+    el.setAttribute('aria-label', 'Бланк заказа № ' + pad(n.no));
+    el.innerHTML =
+      '<div class="zoom-bar">' +
+      '<button type="button" class="zbtn" data-z="close" aria-label="Закрыть">' + ic('x') + '</button>' +
+      '<div class="zoom-title"><b>№ ' + esc(pad(n.no)) + '</b><span>' + esc(n.name || 'Без имени') + '</span></div>' +
+      '<div class="zoom-tools">' +
+      '<button type="button" class="zbtn" data-z="out" aria-label="Уменьшить">' + ic('zout') + '</button>' +
+      '<button type="button" class="zpct" data-z="fit" id="zPct" title="Вписать в экран" aria-label="Вписать в экран">100%</button>' +
+      '<button type="button" class="zbtn" data-z="in" aria-label="Увеличить">' + ic('zin') + '</button>' +
+      '</div></div>' +
+      '<div class="zoom-stage" id="zStage"><div class="zoom-pan" id="zPan">' + sheetHTML(n) + '</div></div>' +
+      '<div class="zoom-foot">' +
+      (fromList ? '<button type="button" class="btn" data-z="open">' + ic('file') + '<span>Открыть заказ</span></button>' : '') +
+      '<button type="button" class="btn" data-z="dl" disabled>' + ic('download') + '<span>Скачать</span></button>' +
+      '<button type="button" class="btn primary" data-z="share" disabled>' + ic('share') + '<span>Поделиться</span></button>' +
+      '</div>' +
+      '<div class="zoom-tip" id="zTip">Двойное касание — приблизить · двумя пальцами — масштаб</div>';
+    document.body.appendChild(el);
+    document.body.classList.add('zoom-open');
+
+    const stage = $('#zStage', el), pan = $('#zPan', el), pct = $('#zPct', el), sheet = pan.firstElementChild;
+    const st = { s: 1, x: 0, y: 0, fit: 1, max: 4 };
+    let W = 0, H = 0, sw = 794, sh = 1123;
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const clampPos = () => {
+      const cw = sw * st.s, ch = sh * st.s;
+      st.x = cw <= W ? (W - cw) / 2 : clamp(st.x, W - cw, 0);
+      st.y = ch <= H ? (H - ch) / 2 : clamp(st.y, H - ch, 0);
+    };
+    let raf = 0;
+    const apply = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        pan.style.transform = 'translate(' + st.x.toFixed(2) + 'px,' + st.y.toFixed(2) + 'px) scale(' + st.s.toFixed(4) + ')';
+        pct.textContent = Math.round(st.s / st.fit * 100) + '%';
+      });
+    };
+    const measure = keep => {
+      const rel = keep ? st.s / st.fit : 1;
+      W = stage.clientWidth; H = stage.clientHeight;
+      sw = sheet.offsetWidth || 794; sh = sheet.offsetHeight || 1123;
+      const f = Math.min((W - 16) / sw, (H - 16) / sh);
+      st.fit = isFinite(f) && f > 0 ? f : 1;
+      st.max = Math.max(4, st.fit * 6);
+      st.s = clamp(st.fit * rel, st.fit, st.max);
+      if (!keep) { st.x = 0; st.y = 0; }
+      clampPos(); apply();
+    };
+    const zoomAt = (cx, cy, ns) => {
+      ns = clamp(ns, st.fit, st.max);
+      const k = ns / st.s;
+      st.x = cx - (cx - st.x) * k; st.y = cy - (cy - st.y) * k; st.s = ns;
+      clampPos(); apply();
+    };
+    const rectOf = () => stage.getBoundingClientRect();
+    const dblTarget = () => Math.min(st.max, Math.max(st.fit * 2.5, 1.2));
+    const toggleAt = (cx, cy) => zoomAt(cx, cy, st.s < st.fit * 1.5 ? dblTarget() : st.fit);
+
+    /* ---- жесты ---- */
+    const ptrs = new Map();
+    let drag = null, pinch = null, lastTap = null;
+    const hideTip = () => { const t = $('#zTip', el); if (t) t.classList.add('off'); };
+    stage.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      hideTip();
+      if (ptrs.size === 1) drag = { x0: e.clientX, y0: e.clientY, tx: st.x, ty: st.y, moved: false, t: Date.now() };
+      else if (ptrs.size === 2) {
+        const a = Array.from(ptrs.values()), r = rectOf();
+        const mx = (a[0].x + a[1].x) / 2 - r.left, my = (a[0].y + a[1].y) / 2 - r.top;
+        pinch = { d0: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1, s0: st.s, cx: (mx - st.x) / st.s, cy: (my - st.y) / st.s };
+        drag = null;
+      }
+    });
+    stage.addEventListener('pointermove', e => {
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (ptrs.size >= 2 && pinch) {
+        const a = Array.from(ptrs.values()), r = rectOf();
+        const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1;
+        const mx = (a[0].x + a[1].x) / 2 - r.left, my = (a[0].y + a[1].y) / 2 - r.top;
+        st.s = clamp(pinch.s0 * d / pinch.d0, st.fit * 0.85, st.max * 1.15);
+        st.x = mx - pinch.cx * st.s; st.y = my - pinch.cy * st.s;
+        clampPos(); apply();
+      } else if (drag) {
+        const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+        if (!drag.moved && Math.hypot(dx, dy) > 6) drag.moved = true;
+        if (drag.moved) { st.x = drag.tx + dx; st.y = drag.ty + dy; clampPos(); apply(); }
+      }
+    });
+    const endPtr = e => {
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.delete(e.pointerId);
+      if (pinch && ptrs.size < 2) {
+        pinch = null;
+        st.s = clamp(st.s, st.fit, st.max); clampPos(); apply();     /* возвращаем масштаб в допустимые границы */
+        if (ptrs.size === 1) { const q = Array.from(ptrs.values())[0]; drag = { x0: q.x, y0: q.y, tx: st.x, ty: st.y, moved: true, t: 0 }; }
+        return;
+      }
+      if (ptrs.size === 0 && drag) {
+        const tap = !drag.moved && Date.now() - drag.t < 500 && e.type === 'pointerup';
+        drag = null;
+        if (tap) {
+          const r = rectOf(), now = Date.now(), px = e.clientX - r.left, py = e.clientY - r.top;
+          if (lastTap && now - lastTap.t < 320 && Math.hypot(px - lastTap.x, py - lastTap.y) < 32) { lastTap = null; toggleAt(px, py); }
+          else lastTap = { t: now, x: px, y: py };
+        }
+      }
+    };
+    stage.addEventListener('pointerup', endPtr);
+    stage.addEventListener('pointercancel', endPtr);
+    stage.addEventListener('wheel', e => {
+      e.preventDefault();
+      const r = rectOf(), dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      zoomAt(e.clientX - r.left, e.clientY - r.top, st.s * Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0018)));
+      hideTip();
+    }, { passive: false });
+
+    /* ---- кнопки ---- */
+    const byBtn = f => zoomAt(W / 2, H / 2, st.s * f);
+    const fname = shareFileName(n), title = 'Бланк предварительного заказа №' + pad(n.no);
+    const summary = [title, n.name, n.date ? fmtDate(n.date) + (n.time ? ' ' + n.time : '') : '', n.table ? 'Стол ' + n.table : ''].filter(Boolean).join(' · ');
+    let blob = null, file = null;
+    const bDl = $('[data-z="dl"]', el), bSh = $('[data-z="share"]', el);
+    el.addEventListener('click', e => {
+      const b = e.target.closest('[data-z]');
+      if (!b || b.disabled) return;
+      const a = b.dataset.z;
+      if (a === 'close') closeZoom();
+      else if (a === 'in') byBtn(1.5);
+      else if (a === 'out') byBtn(1 / 1.5);
+      else if (a === 'fit') zoomAt(W / 2, H / 2, st.fit);
+      else if (a === 'open') {
+        const h = '#/view/' + encodeURIComponent(o.id);
+        if (history.state && history.state.vipZoom) { S.afterZoom = h; closeZoom(); }
+        else { closeZoom(true); location.hash = h; }
+      } else if (a === 'dl') {
+        if (!blob) { openShare(o); return; }
+        const u = URL.createObjectURL(blob), l = document.createElement('a');
+        l.href = u; l.download = fname; document.body.appendChild(l); l.click(); l.remove();
+        setTimeout(() => URL.revokeObjectURL(u), 60000);
+        toast('Изображение сохранено', 'ok');
+      } else if (a === 'share') {
+        let can = false;
+        try { can = !!(blob && file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })); } catch (err) { can = false; }
+        if (!can) { openShare(o); return; }
+        navigator.share({ files: [file], title: title, text: summary }).catch(err => {
+          if (err && err.name !== 'AbortError') toast('Не удалось открыть «Поделиться». Нажмите «Скачать».', 'err');
+        });
+      }
+    });
+    const ready = () => { if (S.zoom && S.zoom.el === el) { bDl.disabled = false; bSh.disabled = false; } };
+    (window.VIPShare ? window.VIPShare.render(sheetModel(n)) : Promise.reject(new Error('no share')))
+      .then(res => {
+        blob = res.blob;
+        try { file = new File([blob], fname, { type: 'image/png' }); } catch (err) { file = null; }
+        ready();
+      }).catch(ready);
+
+    const onKey = e => {
+      if ($('.modal')) return;
+      const k = e.key;
+      if (k === '+' || k === '=') { byBtn(1.4); e.preventDefault(); }
+      else if (k === '-' || k === '_') { byBtn(1 / 1.4); e.preventDefault(); }
+      else if (k === '0') { zoomAt(W / 2, H / 2, st.fit); e.preventDefault(); }
+      else if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown') {
+        const d = 70;
+        if (k === 'ArrowLeft') st.x += d; else if (k === 'ArrowRight') st.x -= d; else if (k === 'ArrowUp') st.y += d; else st.y -= d;
+        clampPos(); apply(); e.preventDefault();
+      }
+    };
+    const onResize = () => measure(true);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    S.zoom = { el: el, onKey: onKey, onResize: onResize };
+    try { history.pushState({ vipZoom: 1 }, '', location.href); } catch (err) { /* ignore */ }
+    measure(false);
+    setTimeout(() => { measure(true); }, 120);                       /* шрифты/логотип могли поменять высоту бланка */
+    setTimeout(hideTip, 4200);
+    const closeBtn = $('[data-z="close"]', el); if (closeBtn) closeBtn.focus({ preventScroll: true });
+  }
+  function closeZoom(silent) {
+    const z = S.zoom;
+    if (!z) return;
+    S.zoom = null;
+    document.removeEventListener('keydown', z.onKey);
+    window.removeEventListener('resize', z.onResize);
+    z.el.remove();
+    document.body.classList.remove('zoom-open');
+    if (!silent && history.state && history.state.vipZoom) { try { history.back(); } catch (e) { /* ignore */ } }
+  }
+  window.addEventListener('popstate', () => {
+    if (S.zoom) closeZoom(true);
+    if (S.afterZoom) { const h = S.afterZoom; S.afterZoom = ''; location.hash = h; }
+  });
+
   /* ============================== печать ================================ */
   /* Область печати A4 (поля 10 мм сверху/снизу и 12 мм по бокам). Высоту берём с запасом,
      чтобы бланк ВСЕГДА умещался на одном листе (в т.ч. в Safari с колонтитулами). */
@@ -421,6 +630,10 @@
       const card = e.target.closest('.ocard');
       if (!card) return;
       const id = card.dataset.id;
+      if (e.target.closest('.thumb')) {                              /* миниатюра → увеличенный просмотр */
+        const oz = S.orders.find(x => x.id === id);
+        if (oz) { openZoom(oz, true); return; }
+      }
       const act = e.target.closest('[data-act]');
       if (act) {
         e.stopPropagation();
@@ -527,13 +740,15 @@
       '<button type="button" class="btn wide" id="vShare">' + ic('share') + '<span>Поделиться</span></button>' +
       '</div></div>' +
       noTimeBar(n, o.id) +
-      '<div class="paper-stage"><div class="paper-fit"><div class="paper-scale">' + sheetHTML(n) + '</div></div></div>' +
-      '<p class="hint">Для PDF нажмите <b>«Печать / PDF»</b> и в окне печати выберите принтер <b>«Сохранить как PDF»</b>.</p>' +
+      '<div class="paper-stage" id="vStage" title="Нажмите, чтобы увеличить"><button type="button" class="paper-zoom" id="vZoom" aria-label="Увеличить бланк">' + ic('zin') + '<span>Увеличить</span></button>' +
+      '<div class="paper-fit"><div class="paper-scale">' + sheetHTML(n) + '</div></div></div>' +
+      '<p class="hint">Нажмите на бланк, чтобы рассмотреть его крупно. Для PDF нажмите <b>«Печать / PDF»</b> и в окне печати выберите принтер <b>«Сохранить как PDF»</b>.</p>' +
       '<p class="audit">Создал: ' + esc(n.createdBy || '—') + (n.createdAt ? ' · ' + esc(new Date(n.createdAt).toLocaleString('ru-RU')) : '') +
       (n.updatedAt && n.updatedAt !== n.createdAt ? ' · изменён ' + esc(new Date(n.updatedAt).toLocaleString('ru-RU')) : '') +
       (deleteOn(n) ? ' · автоудаление: ' + esc(fmtDate(deleteOn(n))) : '') + '</p>' +
       '</section>';
 
+    $('#vStage').onclick = () => openZoom(o, false);
     $('#vPrint').onclick = () => printOrder(o);
     $('#vShare').onclick = () => openShare(o);
     if (isViewer()) { fitPapers(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitPapers).catch(() => { }); return; }
@@ -1734,6 +1949,7 @@
     if (st.mode === 'local') return { cls: 'local', txt: 'Локально', title: 'Локальный режим', text: 'Данные сохраняются только в этом браузере, на этом устройстве. Чтобы заказы и меню были онлайн и на всех телефонах, подключите Firebase — шаги описаны в README.md (раздел «Подключение Firebase»).' };
     if (st.error === 'permission') return { cls: 'bad', txt: 'Нет доступа', title: 'Нет доступа к базе', text: 'Проверьте правила Firestore и список разрешённых email в файле firestore.rules (см. README).' };
     if (!st.online) return { cls: 'bad', txt: 'Нет сети', title: 'Нет соединения', text: 'Можно продолжать работать: изменения сохранятся на устройстве и отправятся в облако, как только появится интернет.' };
+    if (st.serverDown) return { cls: 'bad', txt: 'Нет связи', title: 'Нет связи с сервером', text: 'Интернет есть, но сервер данных (Google Firebase) не отвечает. Приложение показывает данные, сохранённые на этом устройстве; всё, что вы создадите, отправится само, когда связь появится. Если вы без VPN — Google может блокироваться вашим оператором: нажмите «Проверить связь».', check: true };
     if (st.pending) return { cls: 'warn', txt: 'Синхронизация…', title: 'Синхронизация', text: 'Изменения отправляются в облако.' };
     return { cls: 'ok', txt: 'Онлайн', title: 'Онлайн', text: 'Все данные сохранены в облаке и доступны на всех ваших устройствах.' };
   }
@@ -1746,7 +1962,9 @@
   }
   function showSyncInfo() {
     const i = syncInfo();
-    const m = openModal('<h3>' + esc(i.title) + '</h3><p class="modal-text">' + esc(i.text) + '</p><div class="modal-actions"><button type="button" class="btn primary" id="siOk">Понятно</button></div>', 'sm');
+    const m = openModal('<h3>' + esc(i.title) + '</h3><p class="modal-text">' + esc(i.text) + '</p><div class="modal-actions">' +
+      (Store.state.mode === 'cloud' ? '<a class="btn left" href="net-check.html" target="_blank" rel="noopener">' + ic('cloud') + '<span>Проверить связь</span></a>' : '') +
+      '<button type="button" class="btn primary" id="siOk">Понятно</button></div>', 'sm');
     $('#siOk', m).onclick = closeModal;
   }
   let lastErr = null;
@@ -1810,7 +2028,8 @@
     const el = $('#login');
     el.hidden = false;
     el.dataset.built = 'fatal';
-    el.innerHTML = '<div class="fatal"><h1>Нет соединения</h1><p>Не удалось загрузить Firebase. Проверьте интернет и значения в js/firebase-config.js.</p><button type="button" class="btn primary" id="retry">Повторить</button></div>';
+    el.innerHTML = '<div class="fatal"><h1>Нет соединения</h1><p>Не удалось загрузить сервисы Google (Firebase). Проверьте интернет. Если вы без VPN — Google может быть недоступен у вашего оператора: нажмите «Проверить связь», она покажет, что именно блокируется.</p>' +
+      '<div class="fatal-btns"><button type="button" class="btn primary" id="retry">Повторить</button><a class="btn" href="net-check.html">Проверить связь</a></div></div>';
     $('#retry').onclick = () => location.reload();
   }
   function showApp() {
@@ -1829,13 +2048,13 @@
       if (!st.authReady) return;
       if (st.loadError) { showFatal(); return; }
       if (!st.user) {
-        if (S.appShown) { S.appShown = false; S.seedChecked = false; S.cleanedOn = ''; closeModal(); }
+        if (S.appShown) { S.appShown = false; S.seedChecked = false; S.cleanedOn = ''; closeModal(); closeZoom(true); }
         document.body.classList.remove('viewer');
         showLogin();
       } else if (st.role === null) {
         /* роль ещё определяется — экран входа остаётся */
       } else if (st.role === 'none' || st.role === 'disabled') {
-        if (S.appShown) { S.appShown = false; closeModal(); }
+        if (S.appShown) { S.appShown = false; closeModal(); closeZoom(true); }
         document.body.classList.remove('viewer');
         showNoAccess(st.role);
       } else {
@@ -1902,6 +2121,17 @@
     }
   }
 
+  /* ======================= офлайн-кэш (Service Worker) ======================= */
+  /* Приложение и библиотека Firebase сохраняются на устройстве: дальше оно открывается мгновенно
+     и без интернета (и когда зарубежные серверы недоступны). Обновление приходит само. */
+  function registerSW() {
+    if (!('serviceWorker' in navigator)) return;
+    if (navigator.webdriver && !/[?&]sw=1/.test(location.search)) return;    /* автотесты работают без кэша */
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
+    const go = () => navigator.serviceWorker.register('sw.js').catch(e => console.warn('Офлайн-кэш не включился', e));
+    setTimeout(go, 600);   /* не ждём событие load: зависший шрифт Google задерживал бы его очень долго */
+  }
+
   /* ================================ старт ================================ */
   function boot() {
     setupChrome();
@@ -1912,6 +2142,14 @@
     Store.onState(st => { onState(st); if (S.deferred) maybeFlushDeferred(); maybeSeed(); scheduleCleanup(); });
 
     window.addEventListener('hashchange', onHash);
+    /* веб-шрифты грузятся фоном и могут прийти позже — подгоняем бланки по факту */
+    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { clearTimeout(boot.f); boot.f = setTimeout(fitPapers, 60); });
+    /* если сервер отвечает долго — подсказка вместо «вечного» логотипа */
+    setTimeout(() => {
+      const sp = $('#splash');
+      if (sp && !sp.classList.contains('gone') && !sp.querySelector('.splash-hint')) sp.insertAdjacentHTML('beforeend', '<p class="splash-hint">Подключаюсь к серверу…<br><a href="net-check.html">Проверить связь</a></p>');
+    }, 7000);
+    registerSW();
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkVersion(); scheduleCleanup(); } });
     setInterval(() => { scheduleCleanup(); }, 30 * 60 * 1000);
     window.addEventListener('resize', () => { clearTimeout(boot.t); boot.t = setTimeout(fitPapers, 80); });
@@ -1919,6 +2157,7 @@
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
       if ($('.modal')) closeModal();
+      else if (S.zoom) closeZoom();
       else closePicker();
     });
     document.addEventListener('focusout', () => { if (S.deferred) setTimeout(maybeFlushDeferred, 90); });

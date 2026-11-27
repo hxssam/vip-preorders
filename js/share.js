@@ -30,7 +30,9 @@
   function loadFonts() {
     if (!document.fonts || !document.fonts.load) return Promise.resolve();
     const sample = 'Бланк предварительного заказа ИТОГО ₽ 0123456789 Abc';
-    return Promise.all([500, 600, 700, 800].map(w => document.fonts.load(w + ' 16px Manrope', sample).catch(() => { })));
+    /* не ждём шрифты дольше 1,5 с: если сервер шрифтов недоступен, рисуем запасным шрифтом */
+    const all = Promise.all([500, 600, 700, 800].map(w => document.fonts.load(w + ' 16px Manrope', sample).catch(() => { })));
+    return Promise.race([all, new Promise(res => setTimeout(res, 1500))]);
   }
 
   /* ---------- маленькая обёртка над canvas: все размеры в мм, шрифты в pt ---------- */

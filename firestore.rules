@@ -1,9 +1,15 @@
 rules_version = '2';
 
 // Вставьте этот текст в Firebase Console → Firestore Database → Rules → Publish.
-// Доступ только у email из списка ниже (они должны быть добавлены
+//
+// ПЕРСОНАЛ (полный доступ) — email из списка ниже (они должны быть добавлены
 // в Authentication → Users). Пишите строчными буквами.
-// Нужен ещё один аккаунт (например, директора) — добавьте строку через запятую.
+// Нужен ещё один аккаунт персонала (например, директора) — добавьте строку через запятую.
+//
+// ОФИЦИАНТЫ (только просмотр заказов) — создаются в самом приложении
+// (профиль → «Официанты»). Для каждого в коллекции users лежит карточка
+// {role: 'viewer', active: true}; писать в users может только персонал,
+// поэтому официант не может ни выдать себе права, ни что-либо изменить.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -14,9 +20,28 @@ service cloud.firestore {
         ];
     }
 
-    // Приложению нужны только эти четыре коллекции.
+    function isViewer() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'viewer'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    // Меню, категории, настройки — только персонал.
     match /{col}/{docId} {
-      allow read, write: if isStaff() && col in ['menu', 'categories', 'orders', 'meta'];
+      allow read, write: if isStaff() && col in ['menu', 'categories', 'meta'];
+    }
+
+    // Заказы: персонал читает и меняет, официант — только читает.
+    match /orders/{orderId} {
+      allow read: if isStaff() || isViewer();
+      allow write: if isStaff();
+    }
+
+    // Список официантов: персонал управляет, официант видит только свою карточку.
+    match /users/{uid} {
+      allow read: if isStaff() || (request.auth != null && request.auth.uid == uid);
+      allow write: if isStaff();
     }
   }
 }
