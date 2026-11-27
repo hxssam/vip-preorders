@@ -74,7 +74,7 @@
   const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
   const clone = o => JSON.parse(JSON.stringify(o));
 
-  const APP_VERSION = '2026-11-26c';   /* держать в одном значении с version.json */
+  const APP_VERSION = '2026-11-27a';   /* держать в одном значении с version.json */
   const BUILD_DATE = '2026-11-25';     /* часы устройства «раньше» этой даты считаются неверными */
   const AUTO_DEFAULT = 3;              /* автоудаление: дней после даты заказа */
 
@@ -135,6 +135,10 @@
   }
   const serveOf = l => normServe(l && l.serve != null ? l.serve : (l ? l.course : ''));
   const serveMin = l => { const t = serveOf(l); return t ? (+t.slice(0, 2)) * 60 + (+t.slice(3)) : 99999; };
+  const plural = (n, a, b, c) => (n % 10 === 1 && n % 100 !== 11) ? a : ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) ? b : c;
+  const posWord = n => plural(n, 'позиция', 'позиции', 'позиций');
+  /* позиции с названием, но без времени подачи */
+  const noTimeLines = lines => (lines || []).filter(l => String(l.name || '').trim() && !serveOf(l));
   function sortedLines(lines) {
     return lines.map((l, i) => ({ l, i })).sort((a, b) => (serveMin(a.l) - serveMin(b.l)) || (a.i - b.i)).map(x => x.l);
   }
@@ -440,7 +444,8 @@
       n.time ? '<span>' + ic('clock') + esc(n.time) + '</span>' : '',
       n.table ? '<span>' + ic('grid') + 'Стол ' + esc(n.table) + '</span>' : '',
       n.guests ? '<span>' + ic('users') + esc(n.guests) + ' гост.</span>' : '',
-      n.phone ? '<span>' + ic('phone') + esc(n.phone) + '</span>' : ''
+      n.phone ? '<span>' + ic('phone') + esc(n.phone) + '</span>' : '',
+      noTimeLines(n.lines).length ? '<span class="nt-meta" title="Есть позиции без времени подачи">' + ic('clock') + 'без времени: ' + noTimeLines(n.lines).length + '</span>' : ''
     ].join('');
     return '<article class="ocard ' + (n.status === 'cancelled' ? 'is-cancelled' : '') + '" data-id="' + esc(o.id) + '">' +
       '<div class="thumb"><div class="thumb-scale">' + sheetHTML(n) + '</div></div>' +
@@ -483,6 +488,13 @@
   }
 
   /* ============================ просмотр бланка ========================= */
+  function noTimeBar(n, id) {
+    const miss = noTimeLines(n.lines);
+    if (!miss.length) return '';
+    const names = miss.slice(0, 3).map(l => esc(String(l.name).trim())).join(', ') + (miss.length > 3 ? ' и ещё ' + (miss.length - 3) : '');
+    return '<div class="nt-bar" role="status">' + ic('clock') + '<span>Без времени подачи: <b>' + miss.length + '</b> — ' + names + '</span>' +
+      '<a class="btn sm" href="#/edit/' + encodeURIComponent(id) + '">Указать время</a></div>';
+  }
   function renderView(id) {
     S.view = 'view'; S.draft = null;
     if (!Store.isLoaded('orders')) { viewEl.innerHTML = loadingHTML(); S.pendingRoute = true; return; }
@@ -501,6 +513,7 @@
       '<button type="button" class="btn primary" id="vPrint">' + ic('printer') + '<span>Печать / PDF</span></button>' +
       '<button type="button" class="btn wide" id="vShare">' + ic('share') + '<span>Поделиться</span></button>' +
       '</div></div>' +
+      noTimeBar(n, o.id) +
       '<div class="paper-stage"><div class="paper-fit"><div class="paper-scale">' + sheetHTML(n) + '</div></div></div>' +
       '<p class="hint">Для PDF нажмите <b>«Печать / PDF»</b> и в окне печати выберите принтер <b>«Сохранить как PDF»</b>.</p>' +
       '<p class="audit">Создал: ' + esc(n.createdBy || '—') + (n.createdAt ? ' · ' + esc(new Date(n.createdAt).toLocaleString('ru-RU')) : '') +
@@ -555,17 +568,22 @@
   function newDraft() {
     return { id: '', no: nextNo(), date: todayISO(), time: '', name: '', phone: '', table: '', guests: '', prepay: '', lines: [], notes: '', status: 'new', accepted: todayISO(), acceptedBy: lsGet('vip.staff') || '', createdAt: 0, createdBy: '' };
   }
+  function uniqueIds(lines) {
+    const seen = {};
+    lines.forEach(l => { if (!l.id || seen[l.id]) l.id = uid(); seen[l.id] = 1; });
+    return lines;
+  }
   function draftFromOrder(o) {
     const n = normOrder(o);
     return Object.assign({}, n, {
       id: o.id, guests: String(n.guests == null ? '' : n.guests), prepay: num(n.prepay) ? String(num(n.prepay)) : '',
-      lines: n.lines.map(l => ({ id: l.id || uid(), serve: serveOf(l), name: l.name || '', qty: num(l.qty) || 1, price: num(l.price), note: l.note || '', mid: l.mid || '' }))
+      lines: uniqueIds(n.lines.map(l => ({ id: l.id || '', serve: serveOf(l), name: l.name || '', qty: num(l.qty) || 1, price: num(l.price), note: l.note || '', mid: l.mid || '' })))
     });
   }
   function loadDraft() {
     try {
       const d = JSON.parse(lsGet('vip.draft') || 'null');
-      if (d && typeof d === 'object' && Array.isArray(d.lines)) return Object.assign(newDraft(), d, { id: '', lines: d.lines.map(l => Object.assign({}, l, { serve: serveOf(l) })) });
+      if (d && typeof d === 'object' && Array.isArray(d.lines)) return Object.assign(newDraft(), d, { id: '', lines: uniqueIds(d.lines.map(l => Object.assign({}, l, { serve: serveOf(l) }))) });
     } catch (e) { /* ignore */ }
     return null;
   }
@@ -605,6 +623,7 @@
       '</div></div>' +
 
       '<div class="card"><div class="card-h"><h2>Позиции заказа</h2><div class="head-actions">' +
+      '<button type="button" class="btn sm warn" id="noTime" hidden></button>' +
       '<button type="button" class="btn sm" id="sortTime" title="Расставить позиции по времени подачи">' + ic('clock') + 'По времени</button>' +
       '<button type="button" class="btn sm" id="addCustom">' + ic('plus') + 'Своя позиция</button>' +
       '<button type="button" class="btn sm primary only-drawer" data-open-picker>' + ic('book') + 'Из меню</button></div></div>' +
@@ -662,10 +681,11 @@
     renderPickerChips();
     renderPickerItems();
     updateTotals();
+    syncNoTime();
   }
 
   function lineHTML(l, i, flash) {
-    return '<div class="line' + (flash ? ' flash' : '') + '" data-i="' + i + '" data-lid="' + esc(l.id) + '">' +
+    return '<div class="line' + (flash ? ' flash' : '') + (serveOf(l) ? '' : ' nt') + '" data-i="' + i + '" data-lid="' + esc(l.id) + '">' +
       '<label class="ln-c"><span>Подача</span><input data-f="serve" class="tm-in" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" value="' + esc(serveOf(l)) + '" aria-label="Время подачи"></label>' +
       '<label class="ln-n"><span>Наименование</span><input data-f="name" type="text" value="' + esc(l.name) + '" placeholder="Название блюда"></label>' +
       '<div class="ln-q"><span>Кол-во</span><div class="stepper"><button type="button" data-step="-1" aria-label="Меньше">−</button>' +
@@ -722,6 +742,27 @@
     const el = row && $('[data-sum]', row);
     if (el) el.textContent = money(lineSum(l));
   }
+  /* подсветка строк без времени + счётчик «Без времени: N» (классы и текст — без перерисовки списка) */
+  function syncNoTime() {
+    const box = $('#lines'), chip = $('#noTime');
+    if (!box || !S.draft) return;
+    const byId = {};
+    S.draft.lines.forEach(l => { byId[l.id] = l; });
+    $$('.line', box).forEach(r => { const l = byId[r.dataset.lid]; if (l) r.classList.toggle('nt', !serveOf(l)); });
+    const n = noTimeLines(S.draft.lines).length;
+    if (chip) {
+      chip.hidden = !n;
+      if (n) chip.innerHTML = ic('clock') + '<span>Без времени: ' + n + '</span>';
+    }
+  }
+  function focusFirstNoTime() {
+    closePicker();
+    const row = $$('#lines .line.nt').find(r => { const l = S.draft.lines.find(x => x.id === r.dataset.lid); return l && String(l.name || '').trim(); }) || $('#lines .line.nt');
+    const inp = row && $('[data-f="serve"]', row);
+    if (!inp) return;
+    inp.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(() => inp.focus({ preventScroll: true }), 250);
+  }
   const lineIndex = el => { const row = el.closest('.line'); return row ? +row.dataset.i : -1; };
 
   /* общий обработчик полей .tm-in внутри контейнера: набор, выход из поля, выделение при входе */
@@ -748,7 +789,10 @@
       t._fresh = true;   /* выделить всё, но только если пользователь ещё ничего не успел набрать */
       setTimeout(() => { if (t._fresh && document.activeElement === t) { try { t.select(); } catch (x) { /* ignore */ } } }, 0);
     });
-    box.addEventListener('keydown', e => { if (e.target._fresh) e.target._fresh = false; });
+    box.addEventListener('keydown', e => {
+      if (e.target._fresh) e.target._fresh = false;
+      if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('tm-in')) { e.preventDefault(); e.target.blur(); }
+    });
   }
   function commitTime(t, onValue) {
     const r = finishTime(t.value);
@@ -760,11 +804,11 @@
   /* время в строке заказа */
   function onLineTime(t, v) {
     const row = t.closest('.line');
-    const L = row && S.draft && S.draft.lines.find(l => l.id === row.dataset.lid);   /* по id: порядок строк мог измениться */
+    const L = row && S.draft && (S.draft.lines.find(l => l.id === row.dataset.lid) || S.draft.lines[+row.dataset.i]);   /* по id: порядок строк мог измениться */
     if (!L || serveOf(L) === v) return;
     L.serve = v; markDirty();
     Object.keys(S.pLink).forEach(k => { if (S.pLink[k] === L.id) delete S.pLink[k]; });   /* ручная правка закрывает связь с меню */
-    updatePickBadges();
+    updatePickBadges();   /* внутри — syncNoTime */
   }
   /* время в строке меню / общее время для новых позиций */
   function onPickTime(t, v) {
@@ -813,11 +857,12 @@
         else if (b) b.remove();
         const main = $('.pi-main', row);
         let n = main && $('.pi-in', main);
-        if (has && main) { if (!n) { n = document.createElement('span'); n.className = 'pi-in'; main.appendChild(n); } n.textContent = 'в заказе: ' + info.txt; }
+        if (has && main) { if (!n) { n = document.createElement('span'); n.className = 'pi-in'; main.appendChild(n); } n.textContent = 'в заказе: ' + info.txt; n.classList.toggle('nt', !!info.t['']); }
         else if (n) n.remove();
       });
     }
     refreshServeAll();
+    syncNoTime();
   }
   function refreshServeAll() {
     const b = $('#pServeAll');
@@ -848,7 +893,7 @@
     form.addEventListener('submit', e => e.preventDefault());
     const onField = e => {
       const t = e.target, k = t.dataset && t.dataset.d;
-      if (!k) return;
+      if (!k || !S.draft) return;
       S.draft[k] = t.value;
       t.classList.remove('err');
       markDirty();
@@ -860,7 +905,7 @@
     const lines = $('#lines');
     lines.addEventListener('input', e => {
       const t = e.target, f = t.dataset.f;
-      if (!f) return;
+      if (!f || !S.draft) return;
       const idx = lineIndex(t);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
@@ -871,7 +916,7 @@
     });
     lines.addEventListener('change', e => {
       const t = e.target, f = t.dataset.f;
-      if (!f) return;
+      if (!f || !S.draft) return;
       const idx = lineIndex(t);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
@@ -884,13 +929,13 @@
     bindTimeInputs(lines, onLineTime);
     lines.addEventListener('click', e => {
       const b = e.target.closest('button');
-      if (!b) return;
+      if (!b || !S.draft) return;
       const idx = lineIndex(b);
       if (idx < 0) return;
       const L = S.draft.lines[idx];
       if (b.hasAttribute('data-del')) {
         S.draft.lines.splice(idx, 1);
-        renderLines(); updateTotals(); updatePickBadges(); markDirty();
+        renderLines(); updateTotals(); updatePickBadges(); markDirty();   /* updatePickBadges → syncNoTime */
       } else if (b.dataset.step) {
         L.qty = Math.max(1, round2(num(L.qty) + num(b.dataset.step)));
         const row = b.closest('.line');
@@ -929,6 +974,7 @@
       if (!empty) toast(isNew ? 'Бланк удалён' : 'Заказ удалён', 'ok');
       location.hash = '#/orders';
     };
+    $('#noTime').onclick = focusFirstNoTime;
     $('#saveBtn').onclick = () => saveOrder(false);
     $('#savePrintBtn').onclick = () => saveOrder(true);
 
@@ -936,7 +982,8 @@
     $$('[data-open-picker]').forEach(b => { b.onclick = openPicker; });
     $('#closePicker').onclick = closePicker;
     $('#pScrim').onclick = closePicker;
-    $('#pQ').addEventListener('input', e => { S.pQ = e.target.value; renderPickerItems(); });
+    let qTimer = 0;
+    $('#pQ').addEventListener('input', e => { S.pQ = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(renderPickerItems, 70); });
     bindTimeInputs($('#picker'), onPickTime);
     /* закончили ввод времени в строке меню — связь с уже добавленной позицией закрывается */
     $('#picker').addEventListener('focusout', e => {
@@ -1007,7 +1054,7 @@
       if (S.pCat === 'all' && i.cat !== last) { html += '<div class="pgroup">' + esc(catName(i.cat)) + '</div>'; last = i.cat; }
       const off = i.active === false;
       html += '<div class="pitem' + (off ? ' off' : '') + '" data-id="' + esc(i.id) + '">' +
-        '<button type="button" class="pi-main"><b>' + esc(i.name) + '</b><small>' + esc(i.weight || '') + (off ? ' <span class="pi-stop">· стоп</span>' : '') + '</small>' + (by[i.id] ? '<span class="pi-in">в заказе: ' + esc(by[i.id].txt) + '</span>' : '') + '</button>' +
+        '<button type="button" class="pi-main"><b>' + esc(i.name) + '</b><small>' + esc(i.weight || '') + (off ? ' <span class="pi-stop">· стоп</span>' : '') + '</small>' + (by[i.id] ? '<span class="pi-in' + (by[i.id].t[''] ? ' nt' : '') + '">в заказе: ' + esc(by[i.id].txt) + '</span>' : '') + '</button>' +
         '<input class="tm-in pi-time" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="' + esc(S.pServe || 'ЧЧ:ММ') + '" value="' + esc(S.pTimes[i.id] || '') + '" aria-label="Время подачи: ' + esc(i.name) + '">' +
         '<span class="pi-price">' + esc(money(i.price)) + '</span><button type="button" class="pi-add" aria-label="Добавить в заказ">' + ic('plus') + '</button>' +
         (by[i.id] && by[i.id].qty > 0 ? '<i class="pi-badge">×' + esc(fmt(by[i.id].qty)) + '</i>' : '') + '</div>';
@@ -1046,7 +1093,7 @@
     if (row && window.matchMedia('(min-width: 1100px)').matches) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  function saveOrder(doPrint) {
+  function saveOrder(doPrint, skipTimeCheck) {
     const d = S.draft;
     if (!d) return;
     const act = document.activeElement;
@@ -1062,6 +1109,8 @@
       if (el) { el.classList.add('err'); el.focus(); el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
       return;
     }
+    const missing = noTimeLines(d.lines);
+    if (missing.length && !skipTimeCheck) { askNoTime(missing, doPrint); return; }
     const isNew = !d.id;
     const id = d.id || Store.newId();
     const lines = sortedLines(d.lines).filter(l => String(l.name).trim()).map(l => ({
@@ -1086,6 +1135,34 @@
     if (dOn && dOn <= todayISO()) setTimeout(() => toast('Дата заказа старше ' + autoDays() + ' ' + daysWord(autoDays()) + ' — при следующем запуске он будет удалён автоматически', 'err'), 700);
     location.hash = '#/view/' + encodeURIComponent(id);
     if (doPrint) setTimeout(() => printOrder(Object.assign({ id: id }, rec)), 400);
+  }
+
+  /* перед сохранением: есть позиции без времени подачи — даём исправить или проставить одно время всем */
+  function askNoTime(missing, doPrint) {
+    const n = missing.length;
+    const list = missing.slice(0, 6).map(l => '<li>' + esc(String(l.name).trim()) + (num(l.qty) !== 1 ? ' <i>×' + esc(fmt(l.qty)) + '</i>' : '') + '</li>').join('') +
+      (n > 6 ? '<li class="more">и ещё ' + (n - 6) + '</li>' : '');
+    const m = openModal('<h3>Нет времени подачи</h3>' +
+      '<p class="modal-text">Без времени: <b>' + n + '</b> ' + posWord(n) + '. В бланке они окажутся в самом конце списка.</p>' +
+      '<ul class="nt-list">' + list + '</ul>' +
+      '<div class="nt-fill"><label class="fld"><span>Одно время для всех</span><input class="tm-in" id="ntTime" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="ЧЧ:ММ" aria-label="Одно время для всех позиций без времени"></label>' +
+      '<button type="button" class="btn" data-fill>Проставить и сохранить</button></div>' +
+      '<div class="modal-actions"><button type="button" class="btn" data-skip>Сохранить без времени</button><button type="button" class="btn primary" data-fix>Указать время</button></div>', 'sm nt-modal');
+    const inp = $('#ntTime', m);
+    bindTimeInputs(m, () => { });
+    $('[data-fix]', m).onclick = () => { closeModal(); focusFirstNoTime(); };
+    $('[data-skip]', m).onclick = () => { closeModal(); saveOrder(doPrint, true); };
+    const fill = () => {
+      const r = finishTime(inp.value);
+      if (r.bad || !r.v) { inp.classList.add('err'); if (r.bad) toast('Время должно быть от 00:00 до 23:59', 'err'); inp.focus(); return; }
+      if (!S.draft) { closeModal(); return; }
+      S.draft.lines.forEach(l => { if (!serveOf(l)) l.serve = r.v; });
+      markDirty(); closeModal(); renderLines(); updatePickBadges();
+      saveOrder(doPrint, true);
+    };
+    $('[data-fill]', m).onclick = fill;
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fill(); } });
+    $('[data-fix]', m).focus();
   }
 
   /* ============================== меню ================================== */
